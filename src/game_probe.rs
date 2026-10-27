@@ -27,7 +27,7 @@ const CHARACTER_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 const GET_TRANSFORM_VTABLE_SLOT: usize = 22;
 const HOOK_TIMEOUT: Duration = Duration::from_secs(120);
 const PLAYER_PROBE_INTERVAL: u64 = 5;
-const PLAYER_STALE_AFTER_FRAMES: u64 = PLAYER_PROBE_INTERVAL + 5;
+const PLAYER_SAMPLE_MAX_AGE: Duration = Duration::from_secs(1);
 
 const MEM_COMMIT: u32 = 0x1000;
 const PAGE_READONLY: u32 = 0x02;
@@ -64,13 +64,12 @@ type UpdatePostSim = unsafe extern "system" fn(*mut c_void);
 static ORIGINAL_UPDATE_POST_SIM: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static UPDATE_POST_SIM_INSTALLED: AtomicBool = AtomicBool::new(false);
 static UPDATE_POST_SIM_CALLS: AtomicU64 = AtomicU64::new(0);
-static OVERLAY_FRAMES: AtomicU64 = AtomicU64::new(0);
 struct PlayerSampleState {
     status: u8,
     position: Option<[f32; 3]>,
     rotation: Option<[f32; 3]>,
     view_rotation: Option<[f32; 3]>,
-    sampled_at_frame: Option<u64>,
+    sampled_at: Option<Instant>,
 }
 
 static PLAYER_SAMPLE: Mutex<PlayerSampleState> = Mutex::new(PlayerSampleState {
@@ -78,7 +77,7 @@ static PLAYER_SAMPLE: Mutex<PlayerSampleState> = Mutex::new(PlayerSampleState {
     position: None,
     rotation: None,
     view_rotation: None,
-    sampled_at_frame: None,
+    sampled_at: None,
 });
 
 type GetPlayerCharacter = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
@@ -96,10 +95,6 @@ pub(crate) fn callback_count() -> Option<u64> {
         .then(|| UPDATE_POST_SIM_CALLS.load(Ordering::Acquire))
 }
 
-pub(crate) fn advance_overlay_frame() -> u64 {
-    OVERLAY_FRAMES.fetch_add(1, Ordering::AcqRel) + 1
-}
-
 pub(crate) fn player_sample() -> Option<(
     &'static str,
     Option<[f32; 3]>,
@@ -114,10 +109,9 @@ pub(crate) fn player_sample() -> Option<(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if sample.status == 10 {
-        let current_frame = OVERLAY_FRAMES.load(Ordering::Acquire);
-        let fresh = sample.sampled_at_frame.is_some_and(|sampled_at_frame| {
-            current_frame.saturating_sub(sampled_at_frame) < PLAYER_STALE_AFTER_FRAMES
-        });
+        let fresh = sample
+            .sampled_at
+            .is_some_and(|sampled_at| sampled_at.elapsed() <= PLAYER_SAMPLE_MAX_AGE);
         if !fresh {
             return Some(("position stale", None, None, None));
         }
@@ -154,7 +148,7 @@ fn publish_player_sample(
     rotation: Option<[f32; 3]>,
     view_rotation: Option<[f32; 3]>,
 ) {
-    let sampled_at_frame = position.map(|_| OVERLAY_FRAMES.load(Ordering::Acquire));
+    let sampled_at = position.map(|_| Instant::now());
     let mut sample = PLAYER_SAMPLE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -162,7 +156,7 @@ fn publish_player_sample(
     sample.position = position;
     sample.rotation = rotation;
     sample.view_rotation = view_rotation;
-    sample.sampled_at_frame = sampled_at_frame;
+    sample.sampled_at = sampled_at;
 }
 
 pub(crate) fn start_update_callback_probe() {
@@ -351,7 +345,6 @@ unsafe extern "system" fn update_post_sim_hook(context: *mut c_void) {
 }
 
 fn probe_player_transform() {
-    publish_player_sample(0, None, None, None);
     if !readable_span(CHARACTER_MANAGER_SINGLETON, size_of::<*mut c_void>()) {
         publish_player_sample(1, None, None, None);
         return;

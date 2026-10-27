@@ -31,7 +31,6 @@ impl ImguiRenderLoop for BootstrapNotice {
 
     fn render(&mut self, ui: &mut imgui::Ui) {
         let now = Instant::now();
-        game_probe::advance_overlay_frame();
         if ui.is_key_pressed_no_repeat(imgui::Key::F6) && ui.io().key_ctrl && ui.io().key_shift {
             self.hotkey_notice_until = Some(now + Duration::from_secs(2));
         }
@@ -65,7 +64,7 @@ impl ImguiRenderLoop for BootstrapNotice {
                 ui.text(format!("Rotation (view): {view_rotation}"));
                 ui.separator();
                 if status == "position stale" {
-                    ui.text("STALE: 5 frames beyond the refresh interval");
+                    ui.text("STALE: no successful sample for 1 second");
                 } else {
                     ui.text(format!("Player: {status}"));
                 }
