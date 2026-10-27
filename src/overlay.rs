@@ -40,15 +40,15 @@ impl ImguiRenderLoop for BootstrapNotice {
 
         let message = if self.hotkey_notice_until.is_some_and(|until| now < until) {
             "Ctrl+Shift+F6 received by the Rust overlay".to_owned()
-        } else if let Some((x, y, z)) = game_probe::latest_player_position() {
-            format!("Max position: X {x:.1}  Y {y:.1}  Z {z:.1}")
+        } else if let Some(callback_count) = game_probe::callback_count() {
+            format!("UpdatePostSim callbacks observed: {callback_count}")
         } else if self
             .started_at
             .is_some_and(|started_at| now.duration_since(started_at) < Duration::from_secs(10))
         {
             "Rust DirectX 11 render hook active".to_owned()
         } else {
-            return;
+            "Waiting for the UpdatePostSim callback hook".to_owned()
         };
 
         let screen_size = ui.io().display_size;
@@ -72,8 +72,7 @@ pub extern "system" fn InitializeASI() {
 }
 
 fn startup() {
-    append_log("ASI entry point called; installing startup gate and DirectX 11 overlay.");
-    game_probe::install_startup_gate();
+    append_log("ASI entry point called; starting the DirectX 11 overlay hook.");
     let worker = thread::Builder::new()
         .name("madmax-overlay-hook".to_owned())
         .spawn(start_overlay);
@@ -92,6 +91,7 @@ fn start_overlay() {
     match result {
         Ok(Ok(())) => {
             append_log("DirectX 11 render hook installed.");
+            game_probe::start_update_callback_probe();
         }
         Ok(Err(error)) => append_log(&format!("DirectX 11 render hook failed: {error:?}")),
         Err(_) => append_log("Overlay setup panicked; no game operation was attempted."),

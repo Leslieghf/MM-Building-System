@@ -79,3 +79,17 @@ No code, dependencies, tests, game files, installed plugins, or saves were chang
 
 The SDK repository is public but has no discoverable license file in the inspected repository tree. GitHub's [licensing guidance](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository) says that without a license the default copyright rules apply; public visibility alone is not a general grant to reproduce or create derivative works. This project therefore uses the source as technical reference and does not copy, translate, vendor, or redistribute its implementation. The user prefers to keep the mod unpublished if distribution terms become an issue; that does not change this report's no-copying boundary.
 
+
+## Follow-up: source-level ABI checks and crash isolation (2026-10-27)
+
+A second exact-revision inspection clarified source declarations that were previously treated as unknown:
+
+- [`CMETHODV` and `CCharacterManager::GetPlayerCharacter`](https://github.com/gigaHours/mm_sdk/blob/aab754c7bab016d3f043143eead03669dea3076a/hookmgr.h#L13-L16) show an instance call with `this`; [`CAvaSingle<CCharacterManager>::Instance`](https://github.com/gigaHours/mm_sdk/blob/aab754c7bab016d3f043143eead03669dea3076a/core/avasingle.h) and the Steam singleton definition in [`avasingle.cpp`](https://github.com/gigaHours/mm_sdk/blob/aab754c7bab016d3f043143eead03669dea3076a/core/avasingle.cpp) establish the SDK's intended manager pointer source.
+- [`DEFHOOK(void, UpdatePostSim, (void* ctx))`](https://github.com/gigaHours/mm_sdk/blob/aab754c7bab016d3f043143eead03669dea3076a/hookmgr.h#L18-L19) and its use in [`imgui_renderer.cpp`](https://github.com/gigaHours/mm_sdk/blob/aab754c7bab016d3f043eead03669dea3076a/imgui/imgui_renderer.cpp) show the SDK callback shape as `void(void*)`, with the original callback called before queued game work.
+- The SDK's [`HookMgr::Initialize`](https://github.com/gigaHours/mm_sdk/blob/aab754c7bab016d3f043143eead03669dea3076a/hookmgr.cpp) installs plugin hooks synchronously when the `GetStartupInfoW` return address matches `0x14303978D`. An earlier Rust draft spawned a worker from this gate; it may have raced the startup function's return, but this is not proven to have caused the crash. That draft is not used by the current candidate.
+
+The previous review concern that `GetPlayerCharacter` might be static is resolved at the SDK-source level. Local runtime ABI compatibility is still not proven. The transform call remains blocked by the multiple-inheritance adjustment, vtable entry, and object-lifetime uncertainties.
+
+### Diagnostic recommendation
+
+The crash report does not identify whether the failure occurred during hook creation, the first `UpdatePostSim` call, or a later player-object call. The current source candidate removes every player-object operation while preserving the previous hook sequence: overlay installation, worker startup, executable-page wait, and hook installation. The callback only calls the original and increments an atomic counter; the overlay displays that count. A stable run with advancing counts would point toward the removed player-object path, but would not identify which operation was unsafe. Review the exact Rust diff before build/install.
