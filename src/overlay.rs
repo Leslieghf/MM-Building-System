@@ -12,12 +12,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OverlayMode {
     Hud,
-    DebugBrowser,
+    SectionPicker,
 }
 
 impl OverlayMode {
     fn owns_game_input(self) -> bool {
-        matches!(self, Self::DebugBrowser)
+        matches!(self, Self::SectionPicker)
     }
 }
 
@@ -29,14 +29,18 @@ struct DebugEntry {
 
 struct BootstrapNotice {
     mode: OverlayMode,
-    search_filter: String,
+    show_player: bool,
+    show_camera: bool,
+    show_runtime: bool,
 }
 
 impl BootstrapNotice {
     fn new() -> Self {
         Self {
             mode: OverlayMode::Hud,
-            search_filter: String::new(),
+            show_player: true,
+            show_camera: true,
+            show_runtime: false,
         }
     }
 
@@ -115,93 +119,67 @@ impl ImguiRenderLoop for BootstrapNotice {
         }
         if toggle_pressed {
             self.mode = if self.mode == OverlayMode::Hud {
-                OverlayMode::DebugBrowser
+                OverlayMode::SectionPicker
             } else {
                 OverlayMode::Hud
             };
         }
 
         let entries = self.debug_entries();
-        let position = entries
-            .iter()
-            .find(|entry| entry.label == "Position")
-            .map_or("--", |entry| entry.value.as_str());
-        let rotation = entries
-            .iter()
-            .find(|entry| entry.label == "Rotation (player/model)")
-            .map_or("--", |entry| entry.value.as_str());
-
-        ui.window("Mad Max HUD")
+        let style = ui.push_style_color(imgui::StyleColor::WindowBg, [0.055, 0.075, 0.105, 0.96]);
+        ui.window("Mad Max Debug")
             .position([12.0, 12.0], imgui::Condition::Always)
-            .flags(
-                imgui::WindowFlags::NO_DECORATION
-                    | imgui::WindowFlags::NO_BACKGROUND
-                    | imgui::WindowFlags::NO_INPUTS
-                    | imgui::WindowFlags::NO_SAVED_SETTINGS
-                    | imgui::WindowFlags::ALWAYS_AUTO_RESIZE,
-            )
+            .bg_alpha(0.96)
+            .flags(imgui::WindowFlags::NO_SAVED_SETTINGS | imgui::WindowFlags::ALWAYS_AUTO_RESIZE)
             .build(|| {
-                ui.text(format!("Position: {position}"));
-                ui.text(format!("Rotation: {rotation}"));
-                ui.text("Ctrl+Shift+F6: debug browser");
+                if self.show_player {
+                    if ui.collapsing_header("Player", imgui::TreeNodeFlags::DEFAULT_OPEN) {
+                        for entry in entries.iter().filter(|entry| entry.category == "Player") {
+                            ui.text(format!("{}: {}", entry.label, entry.value));
+                        }
+                    }
+                }
+                if self.show_camera {
+                    if ui.collapsing_header("Camera", imgui::TreeNodeFlags::DEFAULT_OPEN) {
+                        for entry in entries.iter().filter(|entry| entry.category == "Camera") {
+                            ui.text(format!("{}: {}", entry.label, entry.value));
+                        }
+                    }
+                }
+                if self.show_runtime {
+                    if ui.collapsing_header("Runtime", imgui::TreeNodeFlags::empty()) {
+                        for entry in entries.iter().filter(|entry| entry.category == "Runtime") {
+                            ui.text(format!("{}: {}", entry.label, entry.value));
+                        }
+                    }
+                }
+                ui.separator();
+                ui.text("Ctrl+Shift+F6: choose sections");
             });
+        style.pop();
 
-        if self.mode == OverlayMode::DebugBrowser {
-            let filter = self.search_filter.trim().to_ascii_lowercase();
+        if self.mode == OverlayMode::SectionPicker {
             let mut close_requested = false;
-            ui.window("Mad Max Debug Browser")
-                .position([12.0, 74.0], imgui::Condition::FirstUseEver)
-                .size([500.0, 620.0], imgui::Condition::FirstUseEver)
-                .flags(imgui::WindowFlags::NO_SAVED_SETTINGS)
+            let style =
+                ui.push_style_color(imgui::StyleColor::WindowBg, [0.055, 0.075, 0.105, 0.98]);
+            ui.window("Debug Sections")
+                .position([12.0, 300.0], imgui::Condition::FirstUseEver)
+                .flags(
+                    imgui::WindowFlags::NO_SAVED_SETTINGS | imgui::WindowFlags::ALWAYS_AUTO_RESIZE,
+                )
                 .build(|| {
-                    ui.text("Ctrl+Shift+F6 or Escape returns mouse input to the game.");
-                    ui.input_text("Filter values", &mut self.search_filter)
-                        .build();
-                    if ui.button("Close debug browser") {
+                    ui.text("Show in the debug panel:");
+                    ui.checkbox("Player", &mut self.show_player);
+                    ui.checkbox("Camera", &mut self.show_camera);
+                    ui.checkbox("Runtime", &mut self.show_runtime);
+                    ui.separator();
+                    if ui.button("Close") {
                         close_requested = true;
                     }
-                    ui.separator();
-
-                    let mut matching_count = 0;
-                    ui.child_window("debug-values")
-                        .size([0.0, 470.0])
-                        .border(true)
-                        .build(|| {
-                            for (category_index, category) in
-                                ["Player", "Physics", "Vehicle", "Camera", "World", "Runtime"]
-                                    .iter()
-                                    .enumerate()
-                            {
-                                let category_entries: Vec<_> = entries
-                                    .iter()
-                                    .filter(|entry| entry.category == *category)
-                                    .filter(|entry| {
-                                        filter.is_empty()
-                                            || entry.label.to_ascii_lowercase().contains(&filter)
-                                            || entry.value.to_ascii_lowercase().contains(&filter)
-                                    })
-                                    .collect();
-                                if category_entries.is_empty() {
-                                    continue;
-                                }
-                                matching_count += category_entries.len();
-
-                                let flags = if category_index == 0 || !filter.is_empty() {
-                                    imgui::TreeNodeFlags::DEFAULT_OPEN
-                                } else {
-                                    imgui::TreeNodeFlags::empty()
-                                };
-                                if ui.collapsing_header(category, flags) {
-                                    for entry in category_entries {
-                                        ui.text(format!("{}: {}", entry.label, entry.value));
-                                    }
-                                }
-                            }
-                            if !filter.is_empty() && matching_count == 0 {
-                                ui.text("No matching values.");
-                            }
-                        });
+                    ui.same_line();
+                    ui.text("Escape returns input to the game.");
                 });
+            style.pop();
             if close_requested {
                 self.mode = OverlayMode::Hud;
             }
