@@ -27,6 +27,10 @@ struct DebugEntry {
     value: String,
 }
 
+fn magnitude([x, y, z]: [f32; 3]) -> f32 {
+    ((x as f64).powi(2) + (y as f64).powi(2) + (z as f64).powi(2)).sqrt() as f32
+}
+
 struct BootstrapNotice {
     mode: OverlayMode,
     show_player: bool,
@@ -62,11 +66,11 @@ impl BootstrapNotice {
         );
         let velocity = sample.and_then(|sample| sample.4).map_or_else(
             || "--".to_owned(),
-            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2} units/s"),
+            |vector| format!("{:.2} units/s", magnitude(vector)),
         );
         let acceleration = sample.and_then(|sample| sample.5).map_or_else(
             || "--".to_owned(),
-            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2} units/s²"),
+            |vector| format!("{:.2} units/s²", magnitude(vector)),
         );
         let callbacks = game_probe::callback_count()
             .map_or_else(|| "waiting".to_owned(), |count| count.to_string());
@@ -88,11 +92,11 @@ impl BootstrapNotice {
         );
         let vehicle_velocity = vehicle.and_then(|sample| sample.2).map_or_else(
             || "--".to_owned(),
-            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2} units/s"),
+            |vector| format!("{:.2} units/s", magnitude(vector)),
         );
         let vehicle_acceleration = vehicle.and_then(|sample| sample.3).map_or_else(
             || "--".to_owned(),
-            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2} units/s²"),
+            |vector| format!("{:.2} units/s²", magnitude(vector)),
         );
 
         vec![
@@ -108,12 +112,12 @@ impl BootstrapNotice {
             },
             DebugEntry {
                 category: "Player",
-                label: "Velocity (derived)",
+                label: "Speed magnitude (estimated)",
                 value: velocity,
             },
             DebugEntry {
                 category: "Player",
-                label: "Acceleration (derived)",
+                label: "Acceleration magnitude (estimated)",
                 value: acceleration,
             },
             DebugEntry {
@@ -138,12 +142,12 @@ impl BootstrapNotice {
             },
             DebugEntry {
                 category: "Vehicle",
-                label: "Velocity (derived)",
+                label: "Speed magnitude (estimated)",
                 value: vehicle_velocity,
             },
             DebugEntry {
                 category: "Vehicle",
-                label: "Acceleration (derived)",
+                label: "Acceleration magnitude (estimated)",
                 value: vehicle_acceleration,
             },
             DebugEntry {
