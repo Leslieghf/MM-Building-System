@@ -76,7 +76,12 @@ impl BootstrapNotice {
             .map_or_else(|| "waiting".to_owned(), |count| count.to_string());
         let vehicle = game_probe::vehicle_sample();
         let vehicle_status = vehicle.map_or("waiting for game callback", |sample| {
-            if sample.0.is_some() || sample.2.is_some() || sample.3.is_some() {
+            if sample.0.is_some()
+                || sample.2.is_some()
+                || sample.3.is_some()
+                || sample.4.is_some()
+                || sample.5.is_some()
+            {
                 "vehicle found"
             } else {
                 "no vehicle available"
@@ -97,6 +102,14 @@ impl BootstrapNotice {
         let vehicle_acceleration = vehicle.and_then(|sample| sample.3).map_or_else(
             || "--".to_owned(),
             |vector| format!("{:.2} units/s²", magnitude(vector)),
+        );
+        let vehicle_angular_velocity = vehicle.and_then(|sample| sample.4).map_or_else(
+            || "--".to_owned(),
+            |vector| format!("{:.2}", magnitude(vector)),
+        );
+        let vehicle_velocity_last_frame = vehicle.and_then(|sample| sample.5).map_or_else(
+            || "--".to_owned(),
+            |vector| format!("{:.2}", magnitude(vector)),
         );
 
         vec![
@@ -149,6 +162,16 @@ impl BootstrapNotice {
                 category: "Vehicle",
                 label: "Acceleration magnitude (physics)",
                 value: vehicle_acceleration,
+            },
+            DebugEntry {
+                category: "Vehicle",
+                label: "Angular velocity magnitude",
+                value: vehicle_angular_velocity,
+            },
+            DebugEntry {
+                category: "Vehicle",
+                label: "Previous-frame speed magnitude",
+                value: vehicle_velocity_last_frame,
             },
             DebugEntry {
                 category: "Runtime",
