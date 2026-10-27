@@ -10,14 +10,12 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 struct BootstrapNotice {
-    started_at: Option<Instant>,
     hotkey_notice_until: Option<Instant>,
 }
 
 impl BootstrapNotice {
     fn new() -> Self {
         Self {
-            started_at: None,
             hotkey_notice_until: None,
         }
     }
@@ -29,41 +27,53 @@ impl ImguiRenderLoop for BootstrapNotice {
         _context: &mut imgui::Context,
         _render_context: &mut dyn hudhook::RenderContext,
     ) {
-        self.started_at = Some(Instant::now());
     }
 
     fn render(&mut self, ui: &mut imgui::Ui) {
         let now = Instant::now();
+        game_probe::advance_overlay_frame();
         if ui.is_key_pressed_no_repeat(imgui::Key::F6) && ui.io().key_ctrl && ui.io().key_shift {
             self.hotkey_notice_until = Some(now + Duration::from_secs(2));
         }
 
-        let message = if self.hotkey_notice_until.is_some_and(|until| now < until) {
-            "Ctrl+Shift+F6 received by the Rust overlay".to_owned()
-        } else if let Some(callback_count) = game_probe::callback_count() {
-            let player_status = game_probe::player_status().unwrap_or("unknown");
-            format!("UpdatePostSim callbacks: {callback_count} | Player: {player_status}")
-        } else if self
-            .started_at
-            .is_some_and(|started_at| now.duration_since(started_at) < Duration::from_secs(10))
-        {
-            "Rust DirectX 11 render hook active".to_owned()
-        } else {
-            "Waiting for the UpdatePostSim callback hook".to_owned()
-        };
+        let sample = game_probe::player_sample();
+        let status = sample.map_or("waiting for game callback", |sample| sample.0);
+        let position = sample
+            .and_then(|sample| sample.1)
+            .map_or_else(|| "--".to_owned(), |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2}"));
+        let rotation = sample
+            .and_then(|sample| sample.2)
+            .map_or_else(|| "--".to_owned(), |[x, y, z]| format!("{x:.1}°, {y:.1}°, {z:.1}°"));
+        let view_rotation = sample
+            .and_then(|sample| sample.3)
+            .map_or_else(|| "--".to_owned(), |[x, y, z]| format!("{x:.1}°, {y:.1}°, {z:.1}°"));
+        let callbacks = game_probe::callback_count()
+            .map_or_else(|| "waiting".to_owned(), |count| count.to_string());
+        let hotkey_notice = self.hotkey_notice_until.is_some_and(|until| now < until);
 
-        let screen_size = ui.io().display_size;
-        ui.window("Mad Max Modding Bootstrap")
-            .position([screen_size[0] * 0.5, 72.0], imgui::Condition::Always)
-            .position_pivot([0.5, 0.0])
+        ui.window("Mad Max Debug")
+            .position([12.0, 12.0], imgui::Condition::Always)
             .flags(
-                imgui::WindowFlags::NO_DECORATION
-                    | imgui::WindowFlags::NO_BACKGROUND
-                    | imgui::WindowFlags::NO_INPUTS
+                imgui::WindowFlags::NO_RESIZE
+                    | imgui::WindowFlags::NO_COLLAPSE
                     | imgui::WindowFlags::NO_SAVED_SETTINGS
                     | imgui::WindowFlags::ALWAYS_AUTO_RESIZE,
             )
-            .build(|| ui.text(&message));
+            .build(|| {
+                ui.text(format!("Position: {position}"));
+                ui.text(format!("Rotation (player/model): {rotation}"));
+                ui.text(format!("Rotation (view): {view_rotation}"));
+                ui.separator();
+                if status == "position stale" {
+                    ui.text("STALE: 5 frames beyond the refresh interval");
+                } else {
+                    ui.text(format!("Player: {status}"));
+                }
+                ui.text(format!("UpdatePostSim frames: {callbacks} (sample every 5)"));
+                if hotkey_notice {
+                    ui.text("Ctrl+Shift+F6 received by the Rust overlay");
+                }
+            });
     }
 }
 

@@ -6,7 +6,8 @@ use std::ffi::c_void;
 use std::fs;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -16,8 +17,17 @@ const STEAM_IMAGE_BASE: usize = 0x14000_0000;
 const UPDATE_POST_SIM_RVA: usize = 0x01FA_5A10;
 const CHARACTER_MANAGER_SINGLETON: usize = 0x1417_F5338;
 const GET_PLAYER_CHARACTER: usize = 0x141C_91250;
+// Steam addresses in the community SDK's CCameraControlManager declarations.
+const CAMERA_MANAGER_SINGLETON: usize = 0x1417_F5378;
+const GET_CAMERA_MATRIX: usize = 0x1422_2DA60;
+// SDK-derived layout candidates from the pinned mm_sdk declarations; neither
+// value is runtime-proven. CPhysicsGameObject lists IPfxGameObject before
+// CGameObject, and GetTransform is the final CGameObject virtual.
+const CHARACTER_TO_GAME_OBJECT_OFFSET: usize = 0x8;
+const GET_TRANSFORM_VTABLE_SLOT: usize = 22;
 const HOOK_TIMEOUT: Duration = Duration::from_secs(120);
-const PLAYER_PROBE_INTERVAL: u64 = 120;
+const PLAYER_PROBE_INTERVAL: u64 = 5;
+const PLAYER_STALE_AFTER_FRAMES: u64 = PLAYER_PROBE_INTERVAL + 5;
 
 const MEM_COMMIT: u32 = 0x1000;
 const PAGE_READONLY: u32 = 0x02;
@@ -54,9 +64,31 @@ type UpdatePostSim = unsafe extern "system" fn(*mut c_void);
 static ORIGINAL_UPDATE_POST_SIM: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static UPDATE_POST_SIM_INSTALLED: AtomicBool = AtomicBool::new(false);
 static UPDATE_POST_SIM_CALLS: AtomicU64 = AtomicU64::new(0);
-static PLAYER_PROBE_STATUS: AtomicU8 = AtomicU8::new(0);
+static OVERLAY_FRAMES: AtomicU64 = AtomicU64::new(0);
+struct PlayerSampleState {
+    status: u8,
+    position: Option<[f32; 3]>,
+    rotation: Option<[f32; 3]>,
+    view_rotation: Option<[f32; 3]>,
+    sampled_at_frame: Option<u64>,
+}
+
+static PLAYER_SAMPLE: Mutex<PlayerSampleState> = Mutex::new(PlayerSampleState {
+    status: 0,
+    position: None,
+    rotation: None,
+    view_rotation: None,
+    sampled_at_frame: None,
+});
 
 type GetPlayerCharacter = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
+type GetTransform = unsafe extern "system" fn(*mut c_void, *mut Matrix4x4) -> bool;
+type GetCameraMatrix = unsafe extern "system" fn(*mut c_void, *mut Matrix4x4);
+
+#[repr(C)]
+struct Matrix4x4 {
+    values: [[f32; 4]; 4],
+}
 
 pub(crate) fn callback_count() -> Option<u64> {
     UPDATE_POST_SIM_INSTALLED
@@ -64,17 +96,73 @@ pub(crate) fn callback_count() -> Option<u64> {
         .then(|| UPDATE_POST_SIM_CALLS.load(Ordering::Acquire))
 }
 
-pub(crate) fn player_status() -> Option<&'static str> {
-    UPDATE_POST_SIM_INSTALLED
-        .load(Ordering::Acquire)
-        .then(|| match PLAYER_PROBE_STATUS.load(Ordering::Acquire) {
-            0 => "waiting",
-            1 => "manager unavailable",
-            2 => "getter unavailable",
-            3 => "no player character",
-            4 => "player character found",
-            _ => "unknown",
-        })
+pub(crate) fn advance_overlay_frame() -> u64 {
+    OVERLAY_FRAMES.fetch_add(1, Ordering::AcqRel) + 1
+}
+
+pub(crate) fn player_sample() -> Option<(
+    &'static str,
+    Option<[f32; 3]>,
+    Option<[f32; 3]>,
+    Option<[f32; 3]>,
+)> {
+    if !UPDATE_POST_SIM_INSTALLED.load(Ordering::Acquire) {
+        return None;
+    }
+
+    let sample = PLAYER_SAMPLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if sample.status == 10 {
+        let current_frame = OVERLAY_FRAMES.load(Ordering::Acquire);
+        let fresh = sample.sampled_at_frame.is_some_and(|sampled_at_frame| {
+            current_frame.saturating_sub(sampled_at_frame) < PLAYER_STALE_AFTER_FRAMES
+        });
+        if !fresh {
+            return Some(("position stale", None, None, None));
+        }
+    }
+
+    Some((
+        player_status_text(sample.status),
+        sample.position,
+        sample.rotation,
+        sample.view_rotation,
+    ))
+}
+
+fn player_status_text(status: u8) -> &'static str {
+    match status {
+        0 => "waiting",
+        1 => "manager unavailable",
+        2 => "getter unavailable",
+        3 => "no player character",
+        4 => "player object unreadable",
+        5 => "candidate subobject unreadable",
+        6 => "candidate vtable unreadable",
+        7 => "candidate slot is not executable",
+        8 => "GetTransform returned false",
+        9 => "position contains non-finite values",
+        10 => "position available",
+        _ => "unknown",
+    }
+}
+
+fn publish_player_sample(
+    status: u8,
+    position: Option<[f32; 3]>,
+    rotation: Option<[f32; 3]>,
+    view_rotation: Option<[f32; 3]>,
+) {
+    let sampled_at_frame = position.map(|_| OVERLAY_FRAMES.load(Ordering::Acquire));
+    let mut sample = PLAYER_SAMPLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    sample.status = status;
+    sample.position = position;
+    sample.rotation = rotation;
+    sample.view_rotation = view_rotation;
+    sample.sampled_at_frame = sampled_at_frame;
 }
 
 pub(crate) fn start_update_callback_probe() {
@@ -168,23 +256,37 @@ fn is_readable_executable_page(address: usize) -> bool {
     )
 }
 
-fn is_readable_page(address: usize) -> bool {
+fn readable_span(address: usize, length: usize) -> bool {
+    let Some(end) = address.checked_add(length) else {
+        return false;
+    };
+    if length == 0 {
+        return true;
+    }
+
     let Some(information) = query_page(address) else {
         return false;
     };
-    if information.state != MEM_COMMIT || information.protect & PAGE_GUARD != 0 {
+    let region_start = information.base_address as usize;
+    let Some(region_end) = region_start.checked_add(information.region_size) else {
+        return false;
+    };
+    if information.state != MEM_COMMIT
+        || information.protect & PAGE_GUARD != 0
+        || !matches!(
+            information.protect & 0xFF,
+            PAGE_READONLY
+                | PAGE_READWRITE
+                | PAGE_WRITECOPY
+                | PAGE_EXECUTE_READ
+                | PAGE_EXECUTE_READWRITE
+                | PAGE_EXECUTE_WRITECOPY
+        )
+    {
         return false;
     }
 
-    matches!(
-        information.protect & 0xFF,
-        PAGE_READONLY
-            | PAGE_READWRITE
-            | PAGE_WRITECOPY
-            | PAGE_EXECUTE_READ
-            | PAGE_EXECUTE_READWRITE
-            | PAGE_EXECUTE_WRITECOPY
-    )
+    address >= region_start && end <= region_end
 }
 
 fn query_page(address: usize) -> Option<MemoryBasicInformation> {
@@ -243,28 +345,27 @@ unsafe extern "system" fn update_post_sim_hook(context: *mut c_void) {
     let original: UpdatePostSim = unsafe { std::mem::transmute(original) };
     unsafe { original(context) };
     let calls = UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel) + 1;
-    if calls % PLAYER_PROBE_INTERVAL == 0
-        && PLAYER_PROBE_STATUS.load(Ordering::Acquire) != 4
-    {
-        probe_player_character();
+    if calls % PLAYER_PROBE_INTERVAL == 0 {
+        probe_player_transform();
     }
 }
 
-fn probe_player_character() {
-    if !is_readable_page(CHARACTER_MANAGER_SINGLETON) {
-        PLAYER_PROBE_STATUS.store(1, Ordering::Release);
+fn probe_player_transform() {
+    publish_player_sample(0, None, None, None);
+    if !readable_span(CHARACTER_MANAGER_SINGLETON, size_of::<*mut c_void>()) {
+        publish_player_sample(1, None, None, None);
         return;
     }
     if !is_readable_executable_page(GET_PLAYER_CHARACTER) {
-        PLAYER_PROBE_STATUS.store(2, Ordering::Release);
+        publish_player_sample(2, None, None, None);
         return;
     }
 
     let manager = unsafe {
         ptr::read_volatile(CHARACTER_MANAGER_SINGLETON as *const *mut c_void)
     };
-    if manager.is_null() || !is_readable_page(manager as usize) {
-        PLAYER_PROBE_STATUS.store(1, Ordering::Release);
+    if manager.is_null() || !readable_span(manager as usize, 1) {
+        publish_player_sample(1, None, None, None);
         return;
     }
 
@@ -272,6 +373,125 @@ fn probe_player_character() {
         std::mem::transmute(GET_PLAYER_CHARACTER)
     };
     let player = unsafe { get_player_character(manager) };
-    let status = if player.is_null() { 3 } else { 4 };
-    PLAYER_PROBE_STATUS.store(status, Ordering::Release);
+    if player.is_null() {
+        publish_player_sample(3, None, None, None);
+        return;
+    }
+    if !readable_span(player as usize, 1) {
+        publish_player_sample(4, None, None, None);
+        return;
+    }
+
+    let Some(game_object_address) =
+        (player as usize).checked_add(CHARACTER_TO_GAME_OBJECT_OFFSET)
+    else {
+        publish_player_sample(5, None, None, None);
+        return;
+    };
+    if game_object_address % std::mem::align_of::<*const usize>() != 0 {
+        publish_player_sample(5, None, None, None);
+        return;
+    }
+    if !readable_span(game_object_address, size_of::<*const usize>()) {
+        publish_player_sample(5, None, None, None);
+        return;
+    }
+
+    let vtable = unsafe { ptr::read_volatile(game_object_address as *const *const usize) };
+    if vtable.is_null() {
+        publish_player_sample(6, None, None, None);
+        return;
+    }
+    if (vtable as usize) % std::mem::align_of::<usize>() != 0 {
+        publish_player_sample(6, None, None, None);
+        return;
+    }
+    let Some(slot_count) = GET_TRANSFORM_VTABLE_SLOT.checked_add(1) else {
+        publish_player_sample(6, None, None, None);
+        return;
+    };
+    let Some(vtable_bytes) = slot_count.checked_mul(size_of::<usize>()) else {
+        publish_player_sample(6, None, None, None);
+        return;
+    };
+    if !readable_span(vtable as usize, vtable_bytes) {
+        publish_player_sample(6, None, None, None);
+        return;
+    }
+
+    let slot_address = vtable.wrapping_add(GET_TRANSFORM_VTABLE_SLOT);
+    let target = unsafe { ptr::read_volatile(slot_address) };
+    if target == 0 || !is_readable_executable_page(target) {
+        publish_player_sample(7, None, None, None);
+        return;
+    }
+
+    let get_transform: GetTransform = unsafe { std::mem::transmute(target) };
+    let mut transform = Matrix4x4 {
+        values: [[0.0; 4]; 4],
+    };
+    if !unsafe { get_transform(game_object_address as *mut c_void, &mut transform) } {
+        publish_player_sample(8, None, None, None);
+        return;
+    }
+
+    let position = [
+        transform.values[3][0],
+        transform.values[3][1],
+        transform.values[3][2],
+    ];
+    if !position.iter().all(|coordinate| coordinate.is_finite()) {
+        publish_player_sample(9, None, None, None);
+        return;
+    }
+
+    let rotation = rotation_xyz_degrees(&transform);
+    let view_rotation = sample_view_rotation();
+    publish_player_sample(10, Some(position), rotation, view_rotation);
+}
+
+fn rotation_xyz_degrees(matrix: &Matrix4x4) -> Option<[f32; 3]> {
+    let values = &matrix.values;
+    if values[..3]
+        .iter()
+        .any(|row| !row[..3].iter().all(|value| value.is_finite()))
+    {
+        return None;
+    }
+
+    let pitch = (-values[0][2]).clamp(-1.0, 1.0).asin();
+    let cos_pitch = pitch.cos();
+    let (roll, yaw) = if cos_pitch.abs() > 1.0e-6 {
+        (
+            values[1][2].atan2(values[2][2]),
+            values[0][1].atan2(values[0][0]),
+        )
+    } else {
+        ((-values[2][1]).atan2(values[1][1]), 0.0)
+    };
+    Some([roll.to_degrees(), pitch.to_degrees(), yaw.to_degrees()])
+}
+
+fn sample_view_rotation() -> Option<[f32; 3]> {
+    if !readable_span(CAMERA_MANAGER_SINGLETON, size_of::<*mut c_void>())
+        || !is_readable_executable_page(GET_CAMERA_MATRIX)
+    {
+        return None;
+    }
+
+    let manager = unsafe {
+        ptr::read_volatile(CAMERA_MANAGER_SINGLETON as *const *mut c_void)
+    };
+    if manager.is_null() || !readable_span(manager as usize, 1) {
+        return None;
+    }
+
+    let get_camera_matrix: GetCameraMatrix = unsafe {
+        std::mem::transmute(GET_CAMERA_MATRIX)
+    };
+    let mut camera_matrix = Matrix4x4 {
+        values: [[0.0; 4]; 4],
+    };
+    unsafe { get_camera_matrix(manager, &mut camera_matrix) };
+    rotation_xyz_degrees(&camera_matrix)
 }
