@@ -76,7 +76,7 @@ impl BootstrapNotice {
             .map_or_else(|| "waiting".to_owned(), |count| count.to_string());
         let vehicle = game_probe::vehicle_sample();
         let vehicle_status = vehicle.map_or("waiting for game callback", |sample| {
-            if sample.0.is_some() {
+            if sample.0.is_some() || sample.2.is_some() || sample.3.is_some() {
                 "vehicle found"
             } else {
                 "no vehicle available"
@@ -142,12 +142,12 @@ impl BootstrapNotice {
             },
             DebugEntry {
                 category: "Vehicle",
-                label: "Speed magnitude (estimated)",
+                label: "Speed magnitude (physics)",
                 value: vehicle_velocity,
             },
             DebugEntry {
                 category: "Vehicle",
-                label: "Acceleration magnitude (estimated)",
+                label: "Acceleration magnitude (physics)",
                 value: vehicle_acceleration,
             },
             DebugEntry {

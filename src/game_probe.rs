@@ -30,6 +30,10 @@ const CHARACTER_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 // CVehicle follows the same multiple-inheritance path through CPhysicsGameObject.
 const VEHICLE_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 const GET_TRANSFORM_VTABLE_SLOT: usize = 22;
+// CVehicle slots counted from the pinned community SDK's primary-base vtable:
+// IPfxGameObject, CPhysicsGameObject, CDamageable, then CVehicle declarations.
+const VEHICLE_GET_VELOCITY_VTABLE_SLOT: usize = 58;
+const VEHICLE_GET_ACCELERATION_VTABLE_SLOT: usize = 60;
 const HOOK_TIMEOUT: Duration = Duration::from_secs(120);
 const GAME_STATE_SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
 const PLAYER_SAMPLE_MAX_AGE: Duration = Duration::from_secs(1);
@@ -109,6 +113,7 @@ static VEHICLE_SAMPLE: Mutex<VehicleSampleState> = Mutex::new(VehicleSampleState
 type GetPlayerCharacter = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
 type GetCharacterVehicle = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
 type GetTransform = unsafe extern "system" fn(*mut c_void, *mut Matrix4x4) -> bool;
+type GetVehicleVector = unsafe extern "system" fn(*mut c_void, *mut [f32; 3]);
 type GetCameraMatrix = unsafe extern "system" fn(*mut c_void, *mut Matrix4x4);
 
 #[repr(C)]
@@ -184,8 +189,11 @@ pub(crate) fn vehicle_sample() -> Option<(
     ))
 }
 
-fn publish_vehicle_sample(transform: Option<Matrix4x4>) {
+fn publish_vehicle_sample(
+    sample_data: Option<(Option<Matrix4x4>, Option<[f32; 3]>, Option<[f32; 3]>)>,
+) {
     let now = Instant::now();
+    let (transform, velocity, acceleration) = sample_data.unwrap_or((None, None, None));
     let (position, rotation) = transform.map_or((None, None), |transform| {
         let position = [
             transform.values[3][0],
@@ -202,33 +210,12 @@ fn publish_vehicle_sample(transform: Option<Matrix4x4>) {
     let mut sample = VEHICLE_SAMPLE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let (velocity, acceleration) =
-        if let (Some(position), Some(previous_position), Some(previous_at)) =
-            (position, sample.position, sample.sampled_at)
-        {
-            let elapsed = now.duration_since(previous_at).as_secs_f32();
-            if elapsed > 0.0 {
-                let velocity = vector_difference(position, previous_position, elapsed);
-                let acceleration =
-                    sample
-                        .velocity
-                        .zip(velocity)
-                        .and_then(|(previous_velocity, velocity)| {
-                            vector_difference(velocity, previous_velocity, elapsed)
-                        });
-                (velocity, acceleration)
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
-
     sample.position = position;
     sample.rotation = rotation;
     sample.velocity = velocity;
     sample.acceleration = acceleration;
-    sample.sampled_at = position.map(|_| now);
+    sample.sampled_at =
+        (position.is_some() || velocity.is_some() || acceleration.is_some()).then_some(now);
 }
 
 fn player_status_text(status: u8) -> &'static str {
@@ -539,7 +526,7 @@ fn probe_game_state() {
     }
 
     probe_player_transform(player);
-    publish_vehicle_sample(sample_vehicle_transform(player));
+    publish_vehicle_sample(sample_vehicle(player));
 }
 
 fn probe_player_transform(player: *mut c_void) {
@@ -610,7 +597,9 @@ fn probe_player_transform(player: *mut c_void) {
     publish_player_sample(10, Some(position), rotation, view_rotation);
 }
 
-fn sample_vehicle_transform(player: *mut c_void) -> Option<Matrix4x4> {
+fn sample_vehicle(
+    player: *mut c_void,
+) -> Option<(Option<Matrix4x4>, Option<[f32; 3]>, Option<[f32; 3]>)> {
     if !is_readable_executable_page(GET_CHARACTER_VEHICLE) {
         return None;
     }
@@ -621,29 +610,32 @@ fn sample_vehicle_transform(player: *mut c_void) -> Option<Matrix4x4> {
         return None;
     }
 
+    let velocity = read_vehicle_vector(vehicle, VEHICLE_GET_VELOCITY_VTABLE_SLOT);
+    let acceleration = read_vehicle_vector(vehicle, VEHICLE_GET_ACCELERATION_VTABLE_SLOT);
+
     let Some(game_object_address) = (vehicle as usize).checked_add(VEHICLE_TO_GAME_OBJECT_OFFSET)
     else {
-        return None;
+        return Some((None, velocity, acceleration));
     };
     if game_object_address % std::mem::align_of::<*const usize>() != 0
         || !readable_span(game_object_address, size_of::<*const usize>())
     {
-        return None;
+        return Some((None, velocity, acceleration));
     }
 
     let vtable = unsafe { ptr::read_volatile(game_object_address as *const *const usize) };
     if vtable.is_null() || (vtable as usize) % std::mem::align_of::<usize>() != 0 {
-        return None;
+        return Some((None, velocity, acceleration));
     }
     let slot_count = GET_TRANSFORM_VTABLE_SLOT.checked_add(1)?;
     let vtable_bytes = slot_count.checked_mul(size_of::<usize>())?;
     if !readable_span(vtable as usize, vtable_bytes) {
-        return None;
+        return Some((None, velocity, acceleration));
     }
 
     let target = unsafe { ptr::read_volatile(vtable.wrapping_add(GET_TRANSFORM_VTABLE_SLOT)) };
     if target == 0 || !is_readable_executable_page(target) {
-        return None;
+        return Some((None, velocity, acceleration));
     }
 
     let get_transform: GetTransform = unsafe { std::mem::transmute(target) };
@@ -651,10 +643,43 @@ fn sample_vehicle_transform(player: *mut c_void) -> Option<Matrix4x4> {
         values: [[0.0; 4]; 4],
     };
     if !unsafe { get_transform(game_object_address as *mut c_void, &mut transform) } {
+        return Some((None, velocity, acceleration));
+    }
+
+    Some((Some(transform), velocity, acceleration))
+}
+
+fn read_vehicle_vector(vehicle: *mut c_void, slot: usize) -> Option<[f32; 3]> {
+    let vehicle_address = vehicle as usize;
+    if vehicle.is_null()
+        || vehicle_address % std::mem::align_of::<*const usize>() != 0
+        || !readable_span(vehicle_address, size_of::<*const usize>())
+    {
         return None;
     }
 
-    Some(transform)
+    let vtable = unsafe { ptr::read_volatile(vehicle as *const *const usize) };
+    if vtable.is_null() || (vtable as usize) % std::mem::align_of::<usize>() != 0 {
+        return None;
+    }
+    let slot_count = slot.checked_add(1)?;
+    let vtable_bytes = slot_count.checked_mul(size_of::<usize>())?;
+    if !readable_span(vtable as usize, vtable_bytes) {
+        return None;
+    }
+
+    let target = unsafe { ptr::read_volatile(vtable.wrapping_add(slot)) };
+    if target == 0 || !is_readable_executable_page(target) {
+        return None;
+    }
+
+    let get_vector: GetVehicleVector = unsafe { std::mem::transmute(target) };
+    let mut vector = [0.0; 3];
+    unsafe { get_vector(vehicle, &mut vector) };
+    vector
+        .iter()
+        .all(|component| component.is_finite())
+        .then_some(vector)
 }
 
 fn rotation_xyz_degrees(matrix: &Matrix4x4) -> Option<[f32; 3]> {
