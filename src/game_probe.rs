@@ -4,10 +4,10 @@ use hudhook::windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use std::env;
 use std::ffi::c_void;
 use std::fs;
-use std::mem::{size_of, MaybeUninit};
+use std::mem::{MaybeUninit, size_of};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,7 +26,6 @@ const GET_CAMERA_MATRIX: usize = 0x1422_2DA60;
 const CHARACTER_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 const GET_TRANSFORM_VTABLE_SLOT: usize = 22;
 const HOOK_TIMEOUT: Duration = Duration::from_secs(120);
-const PLAYER_PROBE_INTERVAL: u64 = 5;
 const PLAYER_SAMPLE_MAX_AGE: Duration = Duration::from_secs(1);
 
 const MEM_COMMIT: u32 = 0x1000;
@@ -69,6 +68,8 @@ struct PlayerSampleState {
     position: Option<[f32; 3]>,
     rotation: Option<[f32; 3]>,
     view_rotation: Option<[f32; 3]>,
+    velocity: Option<[f32; 3]>,
+    acceleration: Option<[f32; 3]>,
     sampled_at: Option<Instant>,
 }
 
@@ -77,6 +78,8 @@ static PLAYER_SAMPLE: Mutex<PlayerSampleState> = Mutex::new(PlayerSampleState {
     position: None,
     rotation: None,
     view_rotation: None,
+    velocity: None,
+    acceleration: None,
     sampled_at: None,
 });
 
@@ -100,6 +103,8 @@ pub(crate) fn player_sample() -> Option<(
     Option<[f32; 3]>,
     Option<[f32; 3]>,
     Option<[f32; 3]>,
+    Option<[f32; 3]>,
+    Option<[f32; 3]>,
 )> {
     if !UPDATE_POST_SIM_INSTALLED.load(Ordering::Acquire) {
         return None;
@@ -113,7 +118,7 @@ pub(crate) fn player_sample() -> Option<(
             .sampled_at
             .is_some_and(|sampled_at| sampled_at.elapsed() <= PLAYER_SAMPLE_MAX_AGE);
         if !fresh {
-            return Some(("position stale", None, None, None));
+            return Some(("position stale", None, None, None, None, None));
         }
     }
 
@@ -122,6 +127,8 @@ pub(crate) fn player_sample() -> Option<(
         sample.position,
         sample.rotation,
         sample.view_rotation,
+        sample.velocity,
+        sample.acceleration,
     ))
 }
 
@@ -148,15 +155,52 @@ fn publish_player_sample(
     rotation: Option<[f32; 3]>,
     view_rotation: Option<[f32; 3]>,
 ) {
-    let sampled_at = position.map(|_| Instant::now());
+    let now = Instant::now();
     let mut sample = PLAYER_SAMPLE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let (velocity, acceleration) =
+        if let (Some(position), Some(previous_position), Some(previous_at)) =
+            (position, sample.position, sample.sampled_at)
+        {
+            let elapsed = now.duration_since(previous_at).as_secs_f32();
+            if elapsed > 0.0 {
+                let velocity = vector_difference(position, previous_position, elapsed);
+                let acceleration =
+                    sample
+                        .velocity
+                        .zip(velocity)
+                        .and_then(|(previous_velocity, velocity)| {
+                            vector_difference(velocity, previous_velocity, elapsed)
+                        });
+                (velocity, acceleration)
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
     sample.status = status;
     sample.position = position;
     sample.rotation = rotation;
     sample.view_rotation = view_rotation;
-    sample.sampled_at = sampled_at;
+    sample.velocity = velocity;
+    sample.acceleration = acceleration;
+    sample.sampled_at = position.map(|_| now);
+}
+
+fn vector_difference(current: [f32; 3], previous: [f32; 3], elapsed: f32) -> Option<[f32; 3]> {
+    let difference = [
+        (current[0] - previous[0]) / elapsed,
+        (current[1] - previous[1]) / elapsed,
+        (current[2] - previous[2]) / elapsed,
+    ];
+    difference
+        .iter()
+        .all(|component| component.is_finite())
+        .then_some(difference)
 }
 
 pub(crate) fn start_update_callback_probe() {
@@ -171,7 +215,9 @@ pub(crate) fn start_update_callback_probe() {
 
 fn install_update_post_sim_hook() {
     if !matches_supported_executable() {
-        append_log("UpdatePostSim probe refused: executable timestamp or size did not match Steam 2015-10-22.");
+        append_log(
+            "UpdatePostSim probe refused: executable timestamp or size did not match Steam 2015-10-22.",
+        );
         return;
     }
 
@@ -202,7 +248,9 @@ fn install_update_post_sim_hook() {
         }
         thread::sleep(Duration::from_millis(250));
     }
-    append_log("UpdatePostSim probe refused: callback did not become readable executable code within 120 seconds.");
+    append_log(
+        "UpdatePostSim probe refused: callback did not become readable executable code within 120 seconds.",
+    );
 }
 
 fn matches_supported_executable() -> bool {
@@ -338,10 +386,8 @@ unsafe extern "system" fn update_post_sim_hook(context: *mut c_void) {
     }
     let original: UpdatePostSim = unsafe { std::mem::transmute(original) };
     unsafe { original(context) };
-    let calls = UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel) + 1;
-    if calls % PLAYER_PROBE_INTERVAL == 0 {
-        probe_player_transform();
-    }
+    UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel);
+    probe_player_transform();
 }
 
 fn probe_player_transform() {
@@ -354,17 +400,14 @@ fn probe_player_transform() {
         return;
     }
 
-    let manager = unsafe {
-        ptr::read_volatile(CHARACTER_MANAGER_SINGLETON as *const *mut c_void)
-    };
+    let manager = unsafe { ptr::read_volatile(CHARACTER_MANAGER_SINGLETON as *const *mut c_void) };
     if manager.is_null() || !readable_span(manager as usize, 1) {
         publish_player_sample(1, None, None, None);
         return;
     }
 
-    let get_player_character: GetPlayerCharacter = unsafe {
-        std::mem::transmute(GET_PLAYER_CHARACTER)
-    };
+    let get_player_character: GetPlayerCharacter =
+        unsafe { std::mem::transmute(GET_PLAYER_CHARACTER) };
     let player = unsafe { get_player_character(manager) };
     if player.is_null() {
         publish_player_sample(3, None, None, None);
@@ -375,8 +418,7 @@ fn probe_player_transform() {
         return;
     }
 
-    let Some(game_object_address) =
-        (player as usize).checked_add(CHARACTER_TO_GAME_OBJECT_OFFSET)
+    let Some(game_object_address) = (player as usize).checked_add(CHARACTER_TO_GAME_OBJECT_OFFSET)
     else {
         publish_player_sample(5, None, None, None);
         return;
@@ -472,16 +514,12 @@ fn sample_view_rotation() -> Option<[f32; 3]> {
         return None;
     }
 
-    let manager = unsafe {
-        ptr::read_volatile(CAMERA_MANAGER_SINGLETON as *const *mut c_void)
-    };
+    let manager = unsafe { ptr::read_volatile(CAMERA_MANAGER_SINGLETON as *const *mut c_void) };
     if manager.is_null() || !readable_span(manager as usize, 1) {
         return None;
     }
 
-    let get_camera_matrix: GetCameraMatrix = unsafe {
-        std::mem::transmute(GET_CAMERA_MATRIX)
-    };
+    let get_camera_matrix: GetCameraMatrix = unsafe { std::mem::transmute(GET_CAMERA_MATRIX) };
     let mut camera_matrix = Matrix4x4 {
         values: [[0.0; 4]; 4],
     };

@@ -58,6 +58,14 @@ impl BootstrapNotice {
             || "--".to_owned(),
             |[x, y, z]| format!("{x:.1}°, {y:.1}°, {z:.1}°"),
         );
+        let velocity = sample.and_then(|sample| sample.4).map_or_else(
+            || "--".to_owned(),
+            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2} units/s"),
+        );
+        let acceleration = sample.and_then(|sample| sample.5).map_or_else(
+            || "--".to_owned(),
+            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2} units/s²"),
+        );
         let callbacks = game_probe::callback_count()
             .map_or_else(|| "waiting".to_owned(), |count| count.to_string());
 
@@ -73,6 +81,16 @@ impl BootstrapNotice {
                 value: rotation,
             },
             DebugEntry {
+                category: "Player",
+                label: "Velocity (derived)",
+                value: velocity,
+            },
+            DebugEntry {
+                category: "Player",
+                label: "Acceleration (derived)",
+                value: acceleration,
+            },
+            DebugEntry {
                 category: "Camera",
                 label: "Rotation (view)",
                 value: view_rotation,
@@ -81,11 +99,6 @@ impl BootstrapNotice {
                 category: "Runtime",
                 label: "UpdatePostSim callbacks",
                 value: callbacks,
-            },
-            DebugEntry {
-                category: "Runtime",
-                label: "Player sample cadence",
-                value: "every 5 game callbacks".to_owned(),
             },
         ]
     }
