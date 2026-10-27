@@ -31,6 +31,7 @@ struct BootstrapNotice {
     mode: OverlayMode,
     show_player: bool,
     show_camera: bool,
+    show_vehicle: bool,
     show_runtime: bool,
 }
 
@@ -40,6 +41,7 @@ impl BootstrapNotice {
             mode: OverlayMode::Hud,
             show_player: true,
             show_camera: true,
+            show_vehicle: true,
             show_runtime: false,
         }
     }
@@ -68,6 +70,30 @@ impl BootstrapNotice {
         );
         let callbacks = game_probe::callback_count()
             .map_or_else(|| "waiting".to_owned(), |count| count.to_string());
+        let vehicle = game_probe::vehicle_sample();
+        let vehicle_status = vehicle.map_or("waiting for game callback", |sample| {
+            if sample.0.is_some() {
+                "vehicle found"
+            } else {
+                "no vehicle available"
+            }
+        });
+        let vehicle_position = vehicle.and_then(|sample| sample.0).map_or_else(
+            || "--".to_owned(),
+            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2}"),
+        );
+        let vehicle_rotation = vehicle.and_then(|sample| sample.1).map_or_else(
+            || "--".to_owned(),
+            |[x, y, z]| format!("{x:.1}°, {y:.1}°, {z:.1}°"),
+        );
+        let vehicle_velocity = vehicle.and_then(|sample| sample.2).map_or_else(
+            || "--".to_owned(),
+            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2} units/s"),
+        );
+        let vehicle_acceleration = vehicle.and_then(|sample| sample.3).map_or_else(
+            || "--".to_owned(),
+            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2} units/s²"),
+        );
 
         vec![
             DebugEntry {
@@ -94,6 +120,31 @@ impl BootstrapNotice {
                 category: "Camera",
                 label: "Rotation (view)",
                 value: view_rotation,
+            },
+            DebugEntry {
+                category: "Vehicle",
+                label: "Status",
+                value: vehicle_status.to_owned(),
+            },
+            DebugEntry {
+                category: "Vehicle",
+                label: "Position",
+                value: vehicle_position,
+            },
+            DebugEntry {
+                category: "Vehicle",
+                label: "Rotation",
+                value: vehicle_rotation,
+            },
+            DebugEntry {
+                category: "Vehicle",
+                label: "Velocity (derived)",
+                value: vehicle_velocity,
+            },
+            DebugEntry {
+                category: "Vehicle",
+                label: "Acceleration (derived)",
+                value: vehicle_acceleration,
             },
             DebugEntry {
                 category: "Runtime",
@@ -146,6 +197,12 @@ impl ImguiRenderLoop for BootstrapNotice {
                         ui.text(format!("{}: {}", entry.label, entry.value));
                     }
                 }
+                if self.show_vehicle {
+                    section_header(ui, "Vehicle");
+                    for entry in entries.iter().filter(|entry| entry.category == "Vehicle") {
+                        ui.text(format!("{}: {}", entry.label, entry.value));
+                    }
+                }
                 if self.show_runtime {
                     section_header(ui, "Runtime");
                     for entry in entries.iter().filter(|entry| entry.category == "Runtime") {
@@ -170,6 +227,7 @@ impl ImguiRenderLoop for BootstrapNotice {
                     ui.text("Show in the debug panel:");
                     ui.checkbox("Player", &mut self.show_player);
                     ui.checkbox("Camera", &mut self.show_camera);
+                    ui.checkbox("Vehicle", &mut self.show_vehicle);
                     ui.checkbox("Runtime", &mut self.show_runtime);
                     ui.separator();
                     if ui.button("Close") {

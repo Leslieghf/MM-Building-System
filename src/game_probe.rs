@@ -17,6 +17,9 @@ const STEAM_IMAGE_BASE: usize = 0x14000_0000;
 const UPDATE_POST_SIM_RVA: usize = 0x01FA_5A10;
 const CHARACTER_MANAGER_SINGLETON: usize = 0x1417_F5338;
 const GET_PLAYER_CHARACTER: usize = 0x141C_91250;
+// Steam address added to the community SDK after the revision used for the
+// initial player-transform research; CCharacter::GetVehiclePtr.
+const GET_CHARACTER_VEHICLE: usize = 0x141C_82910;
 // Steam addresses in the community SDK's CCameraControlManager declarations.
 const CAMERA_MANAGER_SINGLETON: usize = 0x1417_F5378;
 const GET_CAMERA_MATRIX: usize = 0x1422_2DA60;
@@ -24,6 +27,8 @@ const GET_CAMERA_MATRIX: usize = 0x1422_2DA60;
 // value is runtime-proven. CPhysicsGameObject lists IPfxGameObject before
 // CGameObject, and GetTransform is the final CGameObject virtual.
 const CHARACTER_TO_GAME_OBJECT_OFFSET: usize = 0x8;
+// CVehicle follows the same multiple-inheritance path through CPhysicsGameObject.
+const VEHICLE_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 const GET_TRANSFORM_VTABLE_SLOT: usize = 22;
 const HOOK_TIMEOUT: Duration = Duration::from_secs(120);
 const PLAYER_SAMPLE_MAX_AGE: Duration = Duration::from_secs(1);
@@ -73,6 +78,14 @@ struct PlayerSampleState {
     sampled_at: Option<Instant>,
 }
 
+struct VehicleSampleState {
+    position: Option<[f32; 3]>,
+    rotation: Option<[f32; 3]>,
+    velocity: Option<[f32; 3]>,
+    acceleration: Option<[f32; 3]>,
+    sampled_at: Option<Instant>,
+}
+
 static PLAYER_SAMPLE: Mutex<PlayerSampleState> = Mutex::new(PlayerSampleState {
     status: 0,
     position: None,
@@ -83,7 +96,16 @@ static PLAYER_SAMPLE: Mutex<PlayerSampleState> = Mutex::new(PlayerSampleState {
     sampled_at: None,
 });
 
+static VEHICLE_SAMPLE: Mutex<VehicleSampleState> = Mutex::new(VehicleSampleState {
+    position: None,
+    rotation: None,
+    velocity: None,
+    acceleration: None,
+    sampled_at: None,
+});
+
 type GetPlayerCharacter = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
+type GetCharacterVehicle = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
 type GetTransform = unsafe extern "system" fn(*mut c_void, *mut Matrix4x4) -> bool;
 type GetCameraMatrix = unsafe extern "system" fn(*mut c_void, *mut Matrix4x4);
 
@@ -130,6 +152,81 @@ pub(crate) fn player_sample() -> Option<(
         sample.velocity,
         sample.acceleration,
     ))
+}
+
+pub(crate) fn vehicle_sample() -> Option<(
+    Option<[f32; 3]>,
+    Option<[f32; 3]>,
+    Option<[f32; 3]>,
+    Option<[f32; 3]>,
+)> {
+    if !UPDATE_POST_SIM_INSTALLED.load(Ordering::Acquire) {
+        return None;
+    }
+
+    let sample = VEHICLE_SAMPLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fresh = sample
+        .sampled_at
+        .is_some_and(|sampled_at| sampled_at.elapsed() <= PLAYER_SAMPLE_MAX_AGE);
+    if !fresh {
+        return Some((None, None, None, None));
+    }
+
+    Some((
+        sample.position,
+        sample.rotation,
+        sample.velocity,
+        sample.acceleration,
+    ))
+}
+
+fn publish_vehicle_sample(transform: Option<Matrix4x4>) {
+    let now = Instant::now();
+    let (position, rotation) = transform.map_or((None, None), |transform| {
+        let position = [
+            transform.values[3][0],
+            transform.values[3][1],
+            transform.values[3][2],
+        ];
+        if position.iter().all(|coordinate| coordinate.is_finite()) {
+            (Some(position), rotation_xyz_degrees(&transform))
+        } else {
+            (None, None)
+        }
+    });
+
+    let mut sample = VEHICLE_SAMPLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (velocity, acceleration) =
+        if let (Some(position), Some(previous_position), Some(previous_at)) =
+            (position, sample.position, sample.sampled_at)
+        {
+            let elapsed = now.duration_since(previous_at).as_secs_f32();
+            if elapsed > 0.0 {
+                let velocity = vector_difference(position, previous_position, elapsed);
+                let acceleration =
+                    sample
+                        .velocity
+                        .zip(velocity)
+                        .and_then(|(previous_velocity, velocity)| {
+                            vector_difference(velocity, previous_velocity, elapsed)
+                        });
+                (velocity, acceleration)
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+    sample.position = position;
+    sample.rotation = rotation;
+    sample.velocity = velocity;
+    sample.acceleration = acceleration;
+    sample.sampled_at = position.map(|_| now);
 }
 
 fn player_status_text(status: u8) -> &'static str {
@@ -387,22 +484,25 @@ unsafe extern "system" fn update_post_sim_hook(context: *mut c_void) {
     let original: UpdatePostSim = unsafe { std::mem::transmute(original) };
     unsafe { original(context) };
     UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel);
-    probe_player_transform();
+    probe_game_state();
 }
 
-fn probe_player_transform() {
+fn probe_game_state() {
     if !readable_span(CHARACTER_MANAGER_SINGLETON, size_of::<*mut c_void>()) {
         publish_player_sample(1, None, None, None);
+        publish_vehicle_sample(None);
         return;
     }
     if !is_readable_executable_page(GET_PLAYER_CHARACTER) {
         publish_player_sample(2, None, None, None);
+        publish_vehicle_sample(None);
         return;
     }
 
     let manager = unsafe { ptr::read_volatile(CHARACTER_MANAGER_SINGLETON as *const *mut c_void) };
     if manager.is_null() || !readable_span(manager as usize, 1) {
         publish_player_sample(1, None, None, None);
+        publish_vehicle_sample(None);
         return;
     }
 
@@ -411,13 +511,20 @@ fn probe_player_transform() {
     let player = unsafe { get_player_character(manager) };
     if player.is_null() {
         publish_player_sample(3, None, None, None);
+        publish_vehicle_sample(None);
         return;
     }
     if !readable_span(player as usize, 1) {
         publish_player_sample(4, None, None, None);
+        publish_vehicle_sample(None);
         return;
     }
 
+    probe_player_transform(player);
+    publish_vehicle_sample(sample_vehicle_transform(player));
+}
+
+fn probe_player_transform(player: *mut c_void) {
     let Some(game_object_address) = (player as usize).checked_add(CHARACTER_TO_GAME_OBJECT_OFFSET)
     else {
         publish_player_sample(5, None, None, None);
@@ -483,6 +590,53 @@ fn probe_player_transform() {
     let rotation = rotation_xyz_degrees(&transform);
     let view_rotation = sample_view_rotation();
     publish_player_sample(10, Some(position), rotation, view_rotation);
+}
+
+fn sample_vehicle_transform(player: *mut c_void) -> Option<Matrix4x4> {
+    if !is_readable_executable_page(GET_CHARACTER_VEHICLE) {
+        return None;
+    }
+
+    let get_vehicle: GetCharacterVehicle = unsafe { std::mem::transmute(GET_CHARACTER_VEHICLE) };
+    let vehicle = unsafe { get_vehicle(player) };
+    if vehicle.is_null() || !readable_span(vehicle as usize, 1) {
+        return None;
+    }
+
+    let Some(game_object_address) = (vehicle as usize).checked_add(VEHICLE_TO_GAME_OBJECT_OFFSET)
+    else {
+        return None;
+    };
+    if game_object_address % std::mem::align_of::<*const usize>() != 0
+        || !readable_span(game_object_address, size_of::<*const usize>())
+    {
+        return None;
+    }
+
+    let vtable = unsafe { ptr::read_volatile(game_object_address as *const *const usize) };
+    if vtable.is_null() || (vtable as usize) % std::mem::align_of::<usize>() != 0 {
+        return None;
+    }
+    let slot_count = GET_TRANSFORM_VTABLE_SLOT.checked_add(1)?;
+    let vtable_bytes = slot_count.checked_mul(size_of::<usize>())?;
+    if !readable_span(vtable as usize, vtable_bytes) {
+        return None;
+    }
+
+    let target = unsafe { ptr::read_volatile(vtable.wrapping_add(GET_TRANSFORM_VTABLE_SLOT)) };
+    if target == 0 || !is_readable_executable_page(target) {
+        return None;
+    }
+
+    let get_transform: GetTransform = unsafe { std::mem::transmute(target) };
+    let mut transform = Matrix4x4 {
+        values: [[0.0; 4]; 4],
+    };
+    if !unsafe { get_transform(game_object_address as *mut c_void, &mut transform) } {
+        return None;
+    }
+
+    Some(transform)
 }
 
 fn rotation_xyz_degrees(matrix: &Matrix4x4) -> Option<[f32; 3]> {
