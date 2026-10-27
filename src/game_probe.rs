@@ -31,6 +31,7 @@ const CHARACTER_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 const VEHICLE_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 const GET_TRANSFORM_VTABLE_SLOT: usize = 22;
 const HOOK_TIMEOUT: Duration = Duration::from_secs(120);
+const GAME_STATE_SAMPLE_INTERVAL: u64 = 3;
 const PLAYER_SAMPLE_MAX_AGE: Duration = Duration::from_secs(1);
 
 const MEM_COMMIT: u32 = 0x1000;
@@ -483,8 +484,10 @@ unsafe extern "system" fn update_post_sim_hook(context: *mut c_void) {
     }
     let original: UpdatePostSim = unsafe { std::mem::transmute(original) };
     unsafe { original(context) };
-    UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel);
-    probe_game_state();
+    let calls = UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel) + 1;
+    if calls % GAME_STATE_SAMPLE_INTERVAL == 0 {
+        probe_game_state();
+    }
 }
 
 fn probe_game_state() {
