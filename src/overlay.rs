@@ -133,24 +133,21 @@ impl ImguiRenderLoop for BootstrapNotice {
             .flags(imgui::WindowFlags::NO_SAVED_SETTINGS | imgui::WindowFlags::ALWAYS_AUTO_RESIZE)
             .build(|| {
                 if self.show_player {
-                    if ui.collapsing_header("Player", imgui::TreeNodeFlags::DEFAULT_OPEN) {
-                        for entry in entries.iter().filter(|entry| entry.category == "Player") {
-                            ui.text(format!("{}: {}", entry.label, entry.value));
-                        }
+                    ui.text("Player");
+                    for entry in entries.iter().filter(|entry| entry.category == "Player") {
+                        ui.text(format!("{}: {}", entry.label, entry.value));
                     }
                 }
                 if self.show_camera {
-                    if ui.collapsing_header("Camera", imgui::TreeNodeFlags::DEFAULT_OPEN) {
-                        for entry in entries.iter().filter(|entry| entry.category == "Camera") {
-                            ui.text(format!("{}: {}", entry.label, entry.value));
-                        }
+                    ui.text("Camera");
+                    for entry in entries.iter().filter(|entry| entry.category == "Camera") {
+                        ui.text(format!("{}: {}", entry.label, entry.value));
                     }
                 }
                 if self.show_runtime {
-                    if ui.collapsing_header("Runtime", imgui::TreeNodeFlags::empty()) {
-                        for entry in entries.iter().filter(|entry| entry.category == "Runtime") {
-                            ui.text(format!("{}: {}", entry.label, entry.value));
-                        }
+                    ui.text("Runtime");
+                    for entry in entries.iter().filter(|entry| entry.category == "Runtime") {
+                        ui.text(format!("{}: {}", entry.label, entry.value));
                     }
                 }
                 ui.separator();
