@@ -1,78 +1,219 @@
 use super::game_probe;
 use hudhook::hooks::dx11::ImguiDx11Hooks;
-use hudhook::{Hudhook, ImguiRenderLoop, imgui};
+use hudhook::{Hudhook, ImguiRenderLoop, MessageFilter, imgui};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::panic;
 use std::path::PathBuf;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OverlayMode {
+    Hud,
+    DebugBrowser,
+}
+
+impl OverlayMode {
+    fn owns_game_input(self) -> bool {
+        matches!(self, Self::DebugBrowser)
+    }
+}
+
+struct DebugEntry {
+    category: &'static str,
+    label: &'static str,
+    value: String,
+}
 
 struct BootstrapNotice {
-    hotkey_notice_until: Option<Instant>,
+    mode: OverlayMode,
+    search_filter: String,
 }
 
 impl BootstrapNotice {
     fn new() -> Self {
         Self {
-            hotkey_notice_until: None,
+            mode: OverlayMode::Hud,
+            search_filter: String::new(),
         }
+    }
+
+    fn debug_entries(&self) -> Vec<DebugEntry> {
+        let sample = game_probe::player_sample();
+        let status = sample.map_or("waiting for game callback", |sample| sample.0);
+        let position = sample.and_then(|sample| sample.1).map_or_else(
+            || "--".to_owned(),
+            |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2}"),
+        );
+        let rotation = sample.and_then(|sample| sample.2).map_or_else(
+            || "--".to_owned(),
+            |[x, y, z]| format!("{x:.1}°, {y:.1}°, {z:.1}°"),
+        );
+        let view_rotation = sample.and_then(|sample| sample.3).map_or_else(
+            || "--".to_owned(),
+            |[x, y, z]| format!("{x:.1}°, {y:.1}°, {z:.1}°"),
+        );
+        let status = if status == "position stale" {
+            "STALE: no successful sample for 1 second"
+        } else {
+            status
+        };
+        let callbacks = game_probe::callback_count()
+            .map_or_else(|| "waiting".to_owned(), |count| count.to_string());
+
+        vec![
+            DebugEntry {
+                category: "Player",
+                label: "Status",
+                value: status.to_owned(),
+            },
+            DebugEntry {
+                category: "Player",
+                label: "Position",
+                value: position,
+            },
+            DebugEntry {
+                category: "Player",
+                label: "Rotation (player/model)",
+                value: rotation,
+            },
+            DebugEntry {
+                category: "Camera",
+                label: "Rotation (view)",
+                value: view_rotation,
+            },
+            DebugEntry {
+                category: "Runtime",
+                label: "UpdatePostSim callbacks",
+                value: callbacks,
+            },
+            DebugEntry {
+                category: "Runtime",
+                label: "Player sample cadence",
+                value: "every 5 game callbacks".to_owned(),
+            },
+        ]
     }
 }
 
 impl ImguiRenderLoop for BootstrapNotice {
-    fn initialize(
+    fn before_render(
         &mut self,
-        _context: &mut imgui::Context,
+        context: &mut imgui::Context,
         _render_context: &mut dyn hudhook::RenderContext,
     ) {
+        context.io_mut().mouse_draw_cursor = self.mode.owns_game_input();
     }
 
     fn render(&mut self, ui: &mut imgui::Ui) {
-        let now = Instant::now();
-        if ui.is_key_pressed_no_repeat(imgui::Key::F6) && ui.io().key_ctrl && ui.io().key_shift {
-            self.hotkey_notice_until = Some(now + Duration::from_secs(2));
+        let toggle_pressed =
+            ui.is_key_pressed_no_repeat(imgui::Key::F6) && ui.io().key_ctrl && ui.io().key_shift;
+        if self.mode.owns_game_input() && ui.is_key_pressed_no_repeat(imgui::Key::Escape) {
+            self.mode = OverlayMode::Hud;
+        }
+        if toggle_pressed {
+            self.mode = if self.mode == OverlayMode::Hud {
+                OverlayMode::DebugBrowser
+            } else {
+                OverlayMode::Hud
+            };
         }
 
-        let sample = game_probe::player_sample();
-        let status = sample.map_or("waiting for game callback", |sample| sample.0);
-        let position = sample
-            .and_then(|sample| sample.1)
-            .map_or_else(|| "--".to_owned(), |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2}"));
-        let rotation = sample
-            .and_then(|sample| sample.2)
-            .map_or_else(|| "--".to_owned(), |[x, y, z]| format!("{x:.1}°, {y:.1}°, {z:.1}°"));
-        let view_rotation = sample
-            .and_then(|sample| sample.3)
-            .map_or_else(|| "--".to_owned(), |[x, y, z]| format!("{x:.1}°, {y:.1}°, {z:.1}°"));
-        let callbacks = game_probe::callback_count()
-            .map_or_else(|| "waiting".to_owned(), |count| count.to_string());
-        let hotkey_notice = self.hotkey_notice_until.is_some_and(|until| now < until);
+        let entries = self.debug_entries();
+        let position = entries
+            .iter()
+            .find(|entry| entry.label == "Position")
+            .map_or("--", |entry| entry.value.as_str());
+        let rotation = entries
+            .iter()
+            .find(|entry| entry.label == "Rotation (player/model)")
+            .map_or("--", |entry| entry.value.as_str());
 
-        ui.window("Mad Max Debug")
+        ui.window("Mad Max HUD")
             .position([12.0, 12.0], imgui::Condition::Always)
             .flags(
-                imgui::WindowFlags::NO_RESIZE
-                    | imgui::WindowFlags::NO_COLLAPSE
+                imgui::WindowFlags::NO_DECORATION
+                    | imgui::WindowFlags::NO_BACKGROUND
+                    | imgui::WindowFlags::NO_INPUTS
                     | imgui::WindowFlags::NO_SAVED_SETTINGS
                     | imgui::WindowFlags::ALWAYS_AUTO_RESIZE,
             )
             .build(|| {
                 ui.text(format!("Position: {position}"));
-                ui.text(format!("Rotation (player/model): {rotation}"));
-                ui.text(format!("Rotation (view): {view_rotation}"));
-                ui.separator();
-                if status == "position stale" {
-                    ui.text("STALE: no successful sample for 1 second");
-                } else {
-                    ui.text(format!("Player: {status}"));
-                }
-                ui.text(format!("UpdatePostSim frames: {callbacks} (sample every 5)"));
-                if hotkey_notice {
-                    ui.text("Ctrl+Shift+F6 received by the Rust overlay");
-                }
+                ui.text(format!("Rotation: {rotation}"));
+                ui.text("Ctrl+Shift+F6: debug browser");
             });
+
+        if self.mode == OverlayMode::DebugBrowser {
+            let filter = self.search_filter.trim().to_ascii_lowercase();
+            let mut close_requested = false;
+            ui.window("Mad Max Debug Browser")
+                .position([12.0, 74.0], imgui::Condition::FirstUseEver)
+                .size([500.0, 620.0], imgui::Condition::FirstUseEver)
+                .flags(imgui::WindowFlags::NO_SAVED_SETTINGS)
+                .build(|| {
+                    ui.text("Ctrl+Shift+F6 or Escape returns mouse input to the game.");
+                    ui.input_text("Filter values", &mut self.search_filter)
+                        .build();
+                    if ui.button("Close debug browser") {
+                        close_requested = true;
+                    }
+                    ui.separator();
+
+                    let mut matching_count = 0;
+                    ui.child_window("debug-values")
+                        .size([0.0, 470.0])
+                        .border(true)
+                        .build(|| {
+                            for (category_index, category) in
+                                ["Player", "Physics", "Vehicle", "Camera", "World", "Runtime"]
+                                    .iter()
+                                    .enumerate()
+                            {
+                                let category_entries: Vec<_> = entries
+                                    .iter()
+                                    .filter(|entry| entry.category == *category)
+                                    .filter(|entry| {
+                                        filter.is_empty()
+                                            || entry.label.to_ascii_lowercase().contains(&filter)
+                                            || entry.value.to_ascii_lowercase().contains(&filter)
+                                    })
+                                    .collect();
+                                if category_entries.is_empty() {
+                                    continue;
+                                }
+                                matching_count += category_entries.len();
+
+                                let flags = if category_index == 0 || !filter.is_empty() {
+                                    imgui::TreeNodeFlags::DEFAULT_OPEN
+                                } else {
+                                    imgui::TreeNodeFlags::empty()
+                                };
+                                if ui.collapsing_header(category, flags) {
+                                    for entry in category_entries {
+                                        ui.text(format!("{}: {}", entry.label, entry.value));
+                                    }
+                                }
+                            }
+                            if !filter.is_empty() && matching_count == 0 {
+                                ui.text("No matching values.");
+                            }
+                        });
+                });
+            if close_requested {
+                self.mode = OverlayMode::Hud;
+            }
+        }
+    }
+
+    fn message_filter(&self, _io: &imgui::Io) -> MessageFilter {
+        if self.mode.owns_game_input() {
+            MessageFilter::InputAll
+        } else {
+            MessageFilter::empty()
+        }
     }
 }
 
