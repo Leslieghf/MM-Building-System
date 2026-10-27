@@ -41,7 +41,8 @@ impl ImguiRenderLoop for BootstrapNotice {
         let message = if self.hotkey_notice_until.is_some_and(|until| now < until) {
             "Ctrl+Shift+F6 received by the Rust overlay".to_owned()
         } else if let Some(callback_count) = game_probe::callback_count() {
-            format!("UpdatePostSim callbacks observed: {callback_count}")
+            let player_status = game_probe::player_status().unwrap_or("unknown");
+            format!("UpdatePostSim callbacks: {callback_count} | Player: {player_status}")
         } else if self
             .started_at
             .is_some_and(|started_at| now.duration_since(started_at) < Duration::from_secs(10))

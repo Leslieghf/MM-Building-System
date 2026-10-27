@@ -6,7 +6,7 @@ use std::ffi::c_void;
 use std::fs;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicU8, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,9 +14,15 @@ const STEAM_TIMESTAMP: u32 = 0x5628_A448;
 const STEAM_FILE_SIZE: u64 = 76_814_792;
 const STEAM_IMAGE_BASE: usize = 0x14000_0000;
 const UPDATE_POST_SIM_RVA: usize = 0x01FA_5A10;
+const CHARACTER_MANAGER_SINGLETON: usize = 0x1417_F5338;
+const GET_PLAYER_CHARACTER: usize = 0x141C_91250;
 const HOOK_TIMEOUT: Duration = Duration::from_secs(120);
+const PLAYER_PROBE_INTERVAL: u64 = 120;
 
 const MEM_COMMIT: u32 = 0x1000;
+const PAGE_READONLY: u32 = 0x02;
+const PAGE_READWRITE: u32 = 0x04;
+const PAGE_WRITECOPY: u32 = 0x08;
 const PAGE_EXECUTE_READ: u32 = 0x20;
 const PAGE_EXECUTE_READWRITE: u32 = 0x40;
 const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
@@ -48,11 +54,27 @@ type UpdatePostSim = unsafe extern "system" fn(*mut c_void);
 static ORIGINAL_UPDATE_POST_SIM: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static UPDATE_POST_SIM_INSTALLED: AtomicBool = AtomicBool::new(false);
 static UPDATE_POST_SIM_CALLS: AtomicU64 = AtomicU64::new(0);
+static PLAYER_PROBE_STATUS: AtomicU8 = AtomicU8::new(0);
+
+type GetPlayerCharacter = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
 
 pub(crate) fn callback_count() -> Option<u64> {
     UPDATE_POST_SIM_INSTALLED
         .load(Ordering::Acquire)
         .then(|| UPDATE_POST_SIM_CALLS.load(Ordering::Acquire))
+}
+
+pub(crate) fn player_status() -> Option<&'static str> {
+    UPDATE_POST_SIM_INSTALLED
+        .load(Ordering::Acquire)
+        .then(|| match PLAYER_PROBE_STATUS.load(Ordering::Acquire) {
+            0 => "waiting",
+            1 => "manager unavailable",
+            2 => "getter unavailable",
+            3 => "no player character",
+            4 => "player character found",
+            _ => "unknown",
+        })
 }
 
 pub(crate) fn start_update_callback_probe() {
@@ -146,6 +168,25 @@ fn is_readable_executable_page(address: usize) -> bool {
     )
 }
 
+fn is_readable_page(address: usize) -> bool {
+    let Some(information) = query_page(address) else {
+        return false;
+    };
+    if information.state != MEM_COMMIT || information.protect & PAGE_GUARD != 0 {
+        return false;
+    }
+
+    matches!(
+        information.protect & 0xFF,
+        PAGE_READONLY
+            | PAGE_READWRITE
+            | PAGE_WRITECOPY
+            | PAGE_EXECUTE_READ
+            | PAGE_EXECUTE_READWRITE
+            | PAGE_EXECUTE_WRITECOPY
+    )
+}
+
 fn query_page(address: usize) -> Option<MemoryBasicInformation> {
     let mut information = MaybeUninit::<MemoryBasicInformation>::zeroed();
     let result = unsafe {
@@ -201,5 +242,36 @@ unsafe extern "system" fn update_post_sim_hook(context: *mut c_void) {
     }
     let original: UpdatePostSim = unsafe { std::mem::transmute(original) };
     unsafe { original(context) };
-    UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::Release);
+    let calls = UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel) + 1;
+    if calls % PLAYER_PROBE_INTERVAL == 0
+        && PLAYER_PROBE_STATUS.load(Ordering::Acquire) != 4
+    {
+        probe_player_character();
+    }
+}
+
+fn probe_player_character() {
+    if !is_readable_page(CHARACTER_MANAGER_SINGLETON) {
+        PLAYER_PROBE_STATUS.store(1, Ordering::Release);
+        return;
+    }
+    if !is_readable_executable_page(GET_PLAYER_CHARACTER) {
+        PLAYER_PROBE_STATUS.store(2, Ordering::Release);
+        return;
+    }
+
+    let manager = unsafe {
+        ptr::read_volatile(CHARACTER_MANAGER_SINGLETON as *const *mut c_void)
+    };
+    if manager.is_null() || !is_readable_page(manager as usize) {
+        PLAYER_PROBE_STATUS.store(1, Ordering::Release);
+        return;
+    }
+
+    let get_player_character: GetPlayerCharacter = unsafe {
+        std::mem::transmute(GET_PLAYER_CHARACTER)
+    };
+    let player = unsafe { get_player_character(manager) };
+    let status = if player.is_null() { 3 } else { 4 };
+    PLAYER_PROBE_STATUS.store(status, Ordering::Release);
 }
