@@ -31,7 +31,7 @@ const CHARACTER_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 const VEHICLE_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 const GET_TRANSFORM_VTABLE_SLOT: usize = 22;
 const HOOK_TIMEOUT: Duration = Duration::from_secs(120);
-const GAME_STATE_SAMPLE_INTERVAL: u64 = 3;
+const GAME_STATE_SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
 const PLAYER_SAMPLE_MAX_AGE: Duration = Duration::from_secs(1);
 
 const MEM_COMMIT: u32 = 0x1000;
@@ -69,6 +69,7 @@ type UpdatePostSim = unsafe extern "system" fn(*mut c_void);
 static ORIGINAL_UPDATE_POST_SIM: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static UPDATE_POST_SIM_INSTALLED: AtomicBool = AtomicBool::new(false);
 static UPDATE_POST_SIM_CALLS: AtomicU64 = AtomicU64::new(0);
+static LAST_GAME_STATE_SAMPLE: Mutex<Option<Instant>> = Mutex::new(None);
 struct PlayerSampleState {
     status: u8,
     position: Option<[f32; 3]>,
@@ -484,8 +485,22 @@ unsafe extern "system" fn update_post_sim_hook(context: *mut c_void) {
     }
     let original: UpdatePostSim = unsafe { std::mem::transmute(original) };
     unsafe { original(context) };
-    let calls = UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel) + 1;
-    if calls % GAME_STATE_SAMPLE_INTERVAL == 0 {
+    UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel);
+    let now = Instant::now();
+    let should_sample = {
+        let mut last_sample = LAST_GAME_STATE_SAMPLE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if last_sample
+            .is_none_or(|last_sample| now.duration_since(last_sample) >= GAME_STATE_SAMPLE_INTERVAL)
+        {
+            *last_sample = Some(now);
+            true
+        } else {
+            false
+        }
+    };
+    if should_sample {
         probe_game_state();
     }
 }
