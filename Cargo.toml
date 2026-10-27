@@ -1,0 +1,12 @@
+[package]
+name = "madmax-bootstrap"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "madmax_bootstrap"
+crate-type = ["cdylib"]
+
+[dependencies]
+hudhook = { version = "=0.9.3", default-features = false, features = ["dx11"] }
