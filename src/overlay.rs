@@ -46,7 +46,6 @@ impl BootstrapNotice {
 
     fn debug_entries(&self) -> Vec<DebugEntry> {
         let sample = game_probe::player_sample();
-        let status = sample.map_or("waiting for game callback", |sample| sample.0);
         let position = sample.and_then(|sample| sample.1).map_or_else(
             || "--".to_owned(),
             |[x, y, z]| format!("{x:.2}, {y:.2}, {z:.2}"),
@@ -59,20 +58,10 @@ impl BootstrapNotice {
             || "--".to_owned(),
             |[x, y, z]| format!("{x:.1}°, {y:.1}°, {z:.1}°"),
         );
-        let status = if status == "position stale" {
-            "STALE: no successful sample for 1 second"
-        } else {
-            status
-        };
         let callbacks = game_probe::callback_count()
             .map_or_else(|| "waiting".to_owned(), |count| count.to_string());
 
         vec![
-            DebugEntry {
-                category: "Player",
-                label: "Status",
-                value: status.to_owned(),
-            },
             DebugEntry {
                 category: "Player",
                 label: "Position",
@@ -133,19 +122,19 @@ impl ImguiRenderLoop for BootstrapNotice {
             .flags(imgui::WindowFlags::NO_SAVED_SETTINGS | imgui::WindowFlags::ALWAYS_AUTO_RESIZE)
             .build(|| {
                 if self.show_player {
-                    ui.text("Player");
+                    section_header(ui, "Player");
                     for entry in entries.iter().filter(|entry| entry.category == "Player") {
                         ui.text(format!("{}: {}", entry.label, entry.value));
                     }
                 }
                 if self.show_camera {
-                    ui.text("Camera");
+                    section_header(ui, "Camera");
                     for entry in entries.iter().filter(|entry| entry.category == "Camera") {
                         ui.text(format!("{}: {}", entry.label, entry.value));
                     }
                 }
                 if self.show_runtime {
-                    ui.text("Runtime");
+                    section_header(ui, "Runtime");
                     for entry in entries.iter().filter(|entry| entry.category == "Runtime") {
                         ui.text(format!("{}: {}", entry.label, entry.value));
                     }
@@ -190,6 +179,28 @@ impl ImguiRenderLoop for BootstrapNotice {
             MessageFilter::empty()
         }
     }
+}
+
+fn section_header(ui: &imgui::Ui, title: &str) {
+    let position = ui.cursor_screen_pos();
+    let width = ui.content_region_avail()[0];
+    let height = ui.text_line_height() + 8.0;
+    let draw_list = ui.get_window_draw_list();
+    let bar_color = imgui::ImColor32::from_rgba(38, 83, 123, 255);
+    draw_list.add_rect_filled_multicolor(
+        position,
+        [position[0] + width, position[1] + height],
+        bar_color,
+        bar_color,
+        bar_color,
+        bar_color,
+    );
+    draw_list.add_text(
+        [position[0] + 6.0, position[1] + 4.0],
+        imgui::ImColor32::from_rgba(235, 243, 250, 255),
+        title,
+    );
+    ui.dummy([width, height]);
 }
 
 #[unsafe(no_mangle)]
