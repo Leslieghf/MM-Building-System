@@ -1,0 +1,7 @@
+id = "vehicle_watch"
+api_version = 1
+capabilities = ["game.read", "log"]
+
+[callbacks]
+"game.post_sim" = "on_post_sim"
+on_run = "on_run"

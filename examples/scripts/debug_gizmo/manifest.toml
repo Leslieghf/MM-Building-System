@@ -1,0 +1,6 @@
+id = "debug_gizmo"
+api_version = 1
+capabilities = ["debug.draw", "game.read"]
+
+[callbacks]
+"game.post_sim" = "on_post_sim"

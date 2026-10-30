@@ -1,4 +1,7 @@
 /target/
+/.idea/
+/.madmax-cdebug-renderer-target/
+/.madmax-crash-target/
 *.asi
 *.dll
 *.pdb

@@ -1,0 +1,6 @@
+id = "vehicle_jump"
+api_version = 1
+capabilities = ["game.read", "game.vehicle.write", "log"]
+
+[callbacks]
+on_run = "on_run"
