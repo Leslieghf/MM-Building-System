@@ -1,26 +1,39 @@
 # Development
 
-## Build
+## Build and verify
 
-This repository builds a Windows x64 `cdylib` for an ASI loader. With the MSVC Rust target installed:
+The project produces a Windows x64 `cdylib` for an ASI loader. With the MSVC Rust target installed, run:
 
 ```powershell
 cargo fmt --all -- --check
 cargo check --target x86_64-pc-windows-msvc
 cargo build --target x86_64-pc-windows-msvc --release
+cargo doc --no-deps --target x86_64-pc-windows-msvc
 ```
 
-The library artifact is under `target/x86_64-pc-windows-msvc/release/`. Copying or renaming it for an ASI loader is a separate deployment step; builds do not modify a game installation. Never use a build as evidence that a game hook or address candidate works in the live executable.
+The artifact is under `target/x86_64-pc-windows-msvc/release/`. Deployment and game installation are manual. These commands compile and document Rust code; they do not validate native addresses or behavior in a live game.
 
-## Change boundaries
+## Implementation map
 
-- Keep build addresses and executable fingerprints authoritative in `api::game::abi`.
-- Keep raw pointers and guarded calls inside `api::game`; pass owned telemetry and typed effects across its boundary.
-- Keep schedule, queue, and request limits explicit in `api::ecs` and `api::scripts`.
-- Treat Rhai API changes as versioned contract changes; update the catalog in `api::rhai` and its generated reference together.
-- Keep kernel composition narrow and UI presentation inside `devtools`.
-- Do not add game content or expose arbitrary native access through the script API.
+| Path | Change here when |
+| --- | --- |
+| `src/kernel` | ASI initialization, startup composition, or operational logging changes. |
+| `src/api/game/abi` | Supported build identity or native layout/call metadata changes; record evidence in research notes. |
+| `src/api/game/adapter` | Guarded reads, callback hooks, telemetry capture, or native effect application changes. |
+| `src/api/ecs` | Owned frame contracts, schedule ordering, typed intents, diagnostics, or queue bounds change. |
+| `src/api/scripts` | Package loading, validation, console protocol, generation lifecycle, or script limits change. |
+| `src/api/rhai` | Script-visible names, values, capabilities, argument validation, or callback behavior change. |
+| `src/devtools` | Input translation or DX11/ImGui presentation changes. |
+| `examples/scripts` | User-facing package examples change; keep each manifest and callback contract valid. |
+
+## Change rules
+
+- Keep native pointers and unsafe calls inside the adapter. Copy data into owned snapshots before crossing into ECS, scripts, or UI.
+- Keep new cross-boundary work typed, validated, and bounded. Document queue-full and unavailable-data behavior.
+- Treat any script-visible name, value, capability, or semantic change as an API contract change. Update `api::rhai::catalog` and regenerate `docs/rhai-api.md` by building the crate.
+- Mark reverse-engineered claims as observed, inferred, or unverified. Do not turn research candidates into supported behavior without validation.
+- Keep docs about outward behavior and integration contracts. Internal algorithm commentary belongs in code only when it explains a safety constraint a maintainer must preserve.
 
 ## Documentation map
 
-`README.md` is the entry point; `architecture.md` describes runtime ownership and boundaries, `scripting.md` is the package guide, and `rhai-api.md` is generated from the runtime API catalog. Dated reverse-engineering notes in `docs/research/` preserve evidence and are not current usage instructions.
+The root [README](../README.md) routes readers to the [architecture](architecture.md), [Rhai package guide](scripting.md), generated [Rhai API reference](rhai-api.md), and [Rust integration guide](rust-api.md). Research notes under `docs/research/` preserve dated evidence and are not current setup instructions.

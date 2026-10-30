@@ -5,30 +5,43 @@ use bevy_ecs::prelude::*;
 use std::sync::atomic::Ordering;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
+/// Requested velocity for the current player vehicle.
 pub struct SetPlayerVehicleVelocity(pub [f32; 3]);
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+/// Marker that resolves a velocity effect against the occupied vehicle at consumption time.
 pub struct TargetCurrentPlayerVehicle;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Host-local identifier for a typed game effect.
 pub struct IntentId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Result of validating and applying a vehicle effect.
 pub enum IntentResult {
+    /// The native setter accepted the requested value.
     Applied,
+    /// One or more components were invalid or outside the supported range.
     InvalidValue,
+    /// No current player vehicle was available.
     NoCurrentVehicle,
+    /// The native setter could not be resolved for this build.
     SetterUnavailable,
+    /// The game callback failed its exclusive-access gate.
     CallbackNotExclusive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Completion event for a vehicle effect.
 pub struct IntentOutcome {
+    /// Identifier matching the submitted intent.
     pub intent_id: u64,
+    /// Validation/application result.
     pub result: IntentResult,
 }
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+/// ECS wrapper for the latest completed effect outcome.
 pub struct IntentOutcomeRecord(pub IntentOutcome);
 
 /// Session-local identifier for one requested game spawn. It is not a game
@@ -72,6 +85,7 @@ impl SpawnAssetKey {
         }
     }
 
+    /// Return the validated normalized entity key.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -81,6 +95,7 @@ impl SpawnAssetKey {
 /// value. Native calls remain outside this ECS component.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct SpawnTransform {
+    /// Finite row-major transform copied into the request.
     pub matrix: Matrix4x4,
 }
 
@@ -120,29 +135,44 @@ pub enum SpawnLifecycle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Reason a spawn request could not be constructed or queued.
 pub enum SpawnRequestError {
+    /// Entity key does not use supported syntax.
     InvalidAssetKey,
+    /// One or more transform components are non-finite.
     InvalidTransform,
+    /// Bounded spawn request transport has no free slot.
     QueueFull,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Native dispatch outcome for a validated spawn request.
 pub enum SpawnRequestResult {
+    /// The callback safety gate rejected the request.
     CallbackNotExclusive,
+    /// The native spawn function was not available.
     NativeSymbolUnavailable,
+    /// The native spawn identifier could not be allocated.
     SpawnIdUnavailable,
+    /// Request validation failed before native dispatch.
     InvalidRequest,
+    /// The native call was submitted; spawned state still needs observation.
     NativeCallSubmitted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Owned report for one spawn request.
 pub struct SpawnOutcome {
+    /// Host request identifier.
     pub request_id: u64,
+    /// Submission result.
     pub result: SpawnRequestResult,
+    /// Native return value, when a call was made.
     pub native_return: Option<usize>,
 }
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+/// ECS wrapper for the latest spawn outcome.
 pub struct SpawnOutcomeRecord(pub SpawnOutcome);
 
 /// Build a queued spawn bundle from a validated asset key and transform.

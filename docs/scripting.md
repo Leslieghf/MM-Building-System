@@ -1,20 +1,20 @@
 # Using Rhai scripts
 
-Rhai is the supported user-authored extension format. Packages live beside `MadMax.exe` under `MadMaxModding/scripts/`.
+Rhai packages are the supported user-authored extension format. A package runs inside the modloader’s constrained API v1 context; it is not a general-purpose embedded Rhai environment.
 
-## Quick start
+## Install a package
 
-Build the ASI using [Development](development.md), then copy a package such as [`vehicle_watch`](../examples/scripts/vehicle_watch) into the scripts folder:
+Build the ASI using [Development](development.md), load it with a compatible ASI loader, and create this directory beside `MadMax.exe`:
 
 ```text
-MadMaxModding/scripts/vehicle_watch/
+MadMaxModding/scripts/<package-id>/
   manifest.toml
   main.rhai
 ```
 
-Open Dev Tools with **F3**, choose **Scripts → Rescan** if the package was added after startup, then select it and choose **Load**.
+Copy an example from [`examples/scripts`](../examples/scripts). Start the game, open Dev Tools with **F3**, open **Scripts**, choose **Rescan** if the package was added after startup, select the package, and choose **Load**. Package discovery validates manifests without compiling or executing source; loading and reloading perform compilation on a worker and activate the result at a game callback boundary.
 
-## Package manifest
+## Declare the package
 
 ```toml
 id = "vehicle_watch"
@@ -26,13 +26,48 @@ capabilities = ["game.read", "log"]
 on_run = "on_run"
 ```
 
-The package directory, requested ID, and manifest ID must match. IDs contain lowercase ASCII letters, digits, `_`, or `-`. Callback functions accept one context argument. Top-level statements do not run. `state` persists for one loaded generation and resets after a successful reload.
+`id` must match both the package directory and manifest location. It uses 1–64 lowercase ASCII letters, digits, `_`, or `-`; Windows device names are rejected. `api_version` must equal the host API version. A package can request at most 16 capabilities and declare at most two callbacks. Source and package sizes are bounded by the runtime; see the constants in [`api::scripts::package`](../src/api/scripts/package.rs).
 
-## Callback behavior
+## Implement callbacks
 
-`game.post_sim` runs after the game simulation callback. `on_run` is invoked by `script run <id>` through the same callback context. Both receive one `MadMaxPostSimContext`; return values are ignored. A callback error disables that script generation. A failed reload leaves the current generation active.
+Each callback takes exactly one context argument. Top-level statements are not executed, so initialize persistent data inside a callback.
 
-## Console commands
+```rhai
+fn on_post_sim(ctx) {
+    if !state.contains("last_log") {
+        state.last_log = -2.0;
+    }
+    if ctx.frame.elapsed_seconds - state.last_log < 1.0 {
+        return;
+    }
+    state.last_log = ctx.frame.elapsed_seconds;
+    ctx.log.info("Vehicle: " + ctx.format.vector(ctx.vehicle.position));
+}
+
+fn on_run(ctx) {
+    ctx.log.info(`Frame ${ctx.frame.sequence}`);
+}
+```
+
+`game.post_sim` runs after the sampled game callback. `on_run` runs only after `script run <id>` is requested; it receives the latest copied frame and may run before the package’s first `game.post_sim` callback. Return values are ignored. The `state` map persists for the loaded generation, including between `on_run` and `game.post_sim`; a successful reload starts a new generation with empty state.
+
+## Request capabilities
+
+API v1 capabilities are:
+
+| Capability | Grants |
+| --- | --- |
+| `game.read` | Access to available copied player and vehicle values. |
+| `input.read` | Read mod-owned keyboard/mouse events collected by Hudhook/ImGui; this is not native game or controller input polling. |
+| `log` | Bounded informational console output. |
+| `game.vehicle.write` | Request a validated vehicle velocity effect when copied velocity is available. |
+| `debug.draw` | Request bounded one-frame debug primitives through the native renderer adapter. |
+
+Frame metadata, `ctx.math`, and formatting helpers do not require a capability. `available` indicates that an object sample exists; individual properties can still be unavailable and are represented by `()`.
+
+## Use the console
+
+Open **F3 → Console** and use:
 
 ```text
 help
@@ -43,16 +78,14 @@ script reload vehicle_watch
 script unload vehicle_watch
 ```
 
-`script list` discovers manifests without compiling or executing scripts. Load and reload compile explicitly.
-
-## Capabilities
-
-API v1 capabilities are `game.read`, `log`, `input.read`, `game.vehicle.write`, and `debug.draw`. Frame metadata and pure `ctx.math` helpers need no capability.
+`script list` rescans package manifests but does not compile source. `load` compiles and activates a generation; `reload` compiles a replacement; `run` queues one `on_run` callback; `unload` removes the active generation. Requests use bounded queues and may be rejected when capacity is exhausted.
 
 ## Errors and recovery
 
-Undeclared capability access and invalid API arguments raise script errors. Invalid manifests remain visible as invalid packages. Fix the manifest or callback and reload; a failed reload keeps the last active generation running.
+Invalid manifests remain visible in the Scripts view with a validation issue. Compile errors include source position when available. Unknown callbacks, undeclared capabilities, malformed values, non-finite numbers, and out-of-range values become script errors. A callback error disables that generation. A failed reload keeps the last active generation running; correct the package and retry reload.
 
-## Safety and limits
+## Execution limits and safety
 
-Scripts receive copied snapshots. They cannot access arbitrary FFI, files, processes, networks, or modules. Vehicle writes and debug drawing are validated, bounded requests handled by the game callback. Native vehicle-write and renderer behavior remains experimental pending in-game verification. See [Rhai API v1](rhai-api.md) for signatures, values, coordinate conventions, errors, and limits.
+The Rhai engine bounds operations, recursion, variables, functions, strings, arrays, maps, and source size. Per-invocation and per-frame budgets also bound callbacks, logs, vehicle effects, debug primitives, and geometry work. See [Rhai API v1](rhai-api.md) for exact method signatures, value shapes, coordinate conventions, and limits.
+
+Scripts cannot access arbitrary native calls, FFI, files, processes, networks, or Rhai modules. Vehicle writes and debug rendering are experimental native paths. Their requests can compile and pass API validation without producing the expected in-game result.

@@ -1,4 +1,7 @@
 //! Owned, versioned Mad Max scripting boundary.
+//!
+//! This module defines the host-side package lifecycle and event contract.
+//! Script-visible names and semantics are cataloged in [`crate::api::rhai`].
 pub mod auto_reload;
 pub mod console;
 pub mod engine;
@@ -7,13 +10,17 @@ pub mod manager;
 pub mod package;
 
 pub use crate::api::rhai::API_VERSION;
+/// Maximum encoded length of a validated package identifier.
 pub const MAX_SCRIPT_ID_BYTES: usize = 64;
+/// Capacity of the bounded script-event channel.
 pub const EVENT_QUEUE_CAPACITY: usize = 128;
+/// Maximum UTF-8 bytes retained for one script event message.
 pub const MAX_EVENT_BYTES: usize = 1024;
+/// Maximum log events accepted from one callback invocation.
 pub const MAX_LOGS_PER_INVOCATION: usize = 8;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// Validated package identifier used by script requests and status events.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ScriptId(String);
 impl ScriptId {
     /// Parse a lowercase package identifier.
@@ -45,58 +52,94 @@ impl ScriptId {
         &self.0
     }
 }
+/// Monotonic generation number assigned when a package becomes active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScriptGeneration(pub u64);
+/// Callback phase represented in script events and API descriptors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ScriptPhaseId {
+    /// Runs after a sampled Mad Max simulation callback.
     GamePostSim,
 }
 impl ScriptPhaseId {
+    /// Return the manifest key for this callback phase.
     pub fn as_str(self) -> &'static str {
         "game.post_sim"
     }
 }
+/// One generated row in the versioned script API reference.
 #[derive(Debug, Clone)]
 pub struct ScriptApiDescriptor {
+    /// API contract version required by the package.
     pub api_version: u32,
+    /// Host phase in which the callback runs.
     pub phase: ScriptPhaseId,
+    /// Callback name exposed to the script.
     pub callback: &'static str,
+    /// Script-visible values exposed through the callback context.
     pub values: &'static [&'static str],
+    /// Script-visible method signatures.
     pub methods: &'static [&'static str],
+    /// Representation used when a value is unavailable.
     pub unavailable: &'static str,
+    /// Capabilities required by the described context members.
     pub capabilities: &'static [&'static str],
+    /// Bounded effect or lifecycle behavior associated with the callback.
     pub effect: &'static str,
 }
+/// Current lifecycle state of one loaded package generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptStatus {
+    /// Callback execution is enabled.
     Active,
+    /// Callback execution stopped after a script error.
     Disabled,
+    /// No active generation remains for the package.
     Unloaded,
 }
+/// Classification of a script-host event.
 #[derive(Debug, Clone, Copy)]
 pub enum ScriptEventKind {
+    /// Bounded informational output emitted by a script.
     Log,
+    /// Package lifecycle or status update.
     Status,
+    /// Validation, compilation, or callback failure.
     Error,
 }
+/// Owned lifecycle, log, or error event emitted by the script host.
 #[derive(Debug, Clone)]
 pub struct ScriptEvent {
+    /// Request that caused the event, when one exists.
     pub request_id: Option<u64>,
+    /// Package associated with the event.
     pub id: ScriptId,
+    /// Package generation associated with the event; zero means not active.
     pub generation: ScriptGeneration,
+    /// Callback phase associated with the event.
     pub phase: ScriptPhaseId,
+    /// Callback or operation name.
     pub callback: String,
+    /// Event category.
     pub kind: ScriptEventKind,
+    /// Lifecycle state when the event reports one.
     pub status: Option<ScriptStatus>,
+    /// Whether file-change reload is enabled for the package.
     pub auto_reload: bool,
+    /// Most recent reload error, if present.
     pub reload_error: Option<String>,
+    /// One-based source line when reported by the engine.
     pub line: Option<usize>,
+    /// One-based source column when reported by the engine.
     pub column: Option<usize>,
+    /// UTF-8 message, truncated to [`MAX_EVENT_BYTES`] at emission.
     pub text: String,
 }
+/// Bounded publisher for script-host events.
 #[derive(Clone)]
 pub struct ScriptEventSink(pub console::ConsoleEventSink);
 impl ScriptEventSink {
+    /// Bound and publish an event to the console event channel.
     pub fn emit(&self, mut event: ScriptEvent) {
         event.text = bounded_text(&event.text, MAX_EVENT_BYTES);
         event.callback = bounded_text(&event.callback, MAX_SCRIPT_ID_BYTES);
@@ -127,6 +170,7 @@ impl ScriptEventSink {
         });
     }
 }
+/// Create the script event sink and its bounded console receiver.
 pub fn event_channel() -> (ScriptEventSink, console::ConsoleEventReceiver) {
     let (tx, rx) = console::event_channel();
     (ScriptEventSink(tx), rx)

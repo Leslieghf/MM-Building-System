@@ -1,31 +1,43 @@
 # Mad Max modloader and scripting API
 
-This repository builds a Windows x64 ASI modloader foundation for Mad Max. It supplies a DX11 developer overlay, a constrained Rhai scripting API, and Rust-side integration points for building code-library mods. It is not a content mod: the examples demonstrate API use and do not add permanent world content.
+This project is an in-process Windows x64 modloader foundation for one supported Mad Max executable build. It provides a managed Rhai scripting surface, an owned Rust/ECS integration layer, guarded access to game state, and a DX11 developer overlay. It is a code library and modding host: examples exercise APIs and do not add persistent game content.
 
-## Run an example
+## Start here
 
-1. Build the ASI as described in [Development](docs/development.md), then load it with a compatible ASI loader for the supported game executable.
-2. Beside `MadMax.exe`, create `MadMaxModding/scripts/`.
-3. Copy a package such as [`vehicle_watch`](examples/scripts/vehicle_watch) into that directory.
-4. Start Mad Max and open Dev Tools with **F3**. In **Scripts**, select the package and choose **Load**. In **Console**, `script run vehicle_watch` invokes its `on_run` callback.
+1. Build the ASI using [Development](docs/development.md).
+2. Place the resulting library beside a compatible ASI loader and the supported `MadMax.exe` build. Installation is a separate manual step; builds do not modify the game directory.
+3. Create `MadMaxModding/scripts/` beside `MadMax.exe`, then copy one directory from [`examples/scripts`](examples/scripts) into it.
+4. Start the game, open Dev Tools with **F3**, open **Scripts**, rescan if needed, select the package, and load it. Use **Console** to run `script run <id>` for packages with `on_run`.
 
-Package layout, capabilities, callback behavior, and limits are in [Using Rhai scripts](docs/scripting.md). The generated, complete method reference is [Rhai API v1](docs/rhai-api.md).
+The package format, callback lifecycle, capabilities, console commands, and recovery behavior are in [Using Rhai scripts](docs/scripting.md). The complete generated callback reference is [Rhai API v1](docs/rhai-api.md).
 
-## Modding surface
+## How the host is arranged
 
-- A build-checked adapter for one known Mad Max executable build.
-- Owned game snapshots and bounded, typed effects for Rust systems and Rhai callbacks.
-- Headless Bevy schedules that run on host callbacks without creating a renderer or taking ownership of game entities.
-- A constrained Rhai v1 API and managed package lifecycle.
-- A DX11 developer overlay for script management, console output, and diagnostics.
+```text
+MadMax.exe callbacks
+    -> build-checked native adapter
+    -> owned game snapshot
+    -> Rust systems and Rhai callbacks
+    -> bounded typed effects
+    -> native adapter
 
-The current Rust system-registration seam is in-process only; it is not a stable ABI for separately compiled Rust mods. Rhai packages are the supported user-authored extension format. This project does not expose arbitrary native calls, filesystem, process, or network access to scripts.
+Hudhook / ImGui -> input snapshot and developer-tools presentation
+```
 
-## Guides
+Native addresses, layouts, and calling conventions belong to `api::game::abi`; guarded pointer access and game calls belong to `api::game::adapter`. The rest of the runtime exchanges copied values and typed requests across that boundary. See [Architecture](docs/architecture.md) for ownership and phase ordering.
 
-- [Architecture](docs/architecture.md): runtime flow and module responsibilities.
-- [Using Rhai scripts](docs/scripting.md): install location, package format, callbacks, and common commands.
-- [Development](docs/development.md): build, verification, and contribution boundaries.
-- [Research notes](docs/research/README.md): dated evidence and investigative history, not an onboarding guide.
+## Extension surfaces
 
-Game addresses and object layouts are build-specific; several native capabilities remain experimental or await in-game verification. See [Architecture](docs/architecture.md) for the safety boundary.
+- **Rhai packages** are the supported user-authored extension format. Scripts receive a versioned, capability-checked context and can request only documented bounded effects.
+- **Rust/ECS systems** express in-process host behavior using owned frame data, Bevy resources/components, and named callback sets. They are source integration points, not a stable ABI or a separately loadable Rust plugin format.
+- **The native adapter** is tied to a recorded executable fingerprint. A successful build does not validate a candidate address or native behavior in game.
+
+Scripts have no general FFI, file, process, network, or dynamic module access. Some native vehicle-write and debug-render paths remain experimental. The repository’s [research notes](docs/research/README.md) are dated evidence, not supported usage instructions.
+
+## Documentation
+
+- [Architecture](docs/architecture.md) — runtime phases, module ownership, data flow, and native safety boundary.
+- [Using Rhai scripts](docs/scripting.md) — install a package, define callbacks, request capabilities, and diagnose failures.
+- [Rhai API v1](docs/rhai-api.md) — generated signatures, values, errors, and limits.
+- [Rust integration](docs/rust-api.md) — ECS data contracts and in-process integration constraints.
+- [Development](docs/development.md) — build, verify, and change the implementation safely.

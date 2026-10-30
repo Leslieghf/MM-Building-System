@@ -16,21 +16,26 @@ pub struct InputFrame {
 }
 
 impl InputFrame {
+    /// Whether a supported key is held in this frame.
     pub fn is_down(self, key: u32) -> bool {
         bit(self.down, key)
     }
+    /// Whether the key changed from released to pressed since the last consume.
     pub fn just_pressed(self, key: u32) -> bool {
         bit(self.just_pressed, key)
     }
+    /// Whether the key changed from pressed to released since the last consume.
     pub fn just_released(self, key: u32) -> bool {
         bit(self.just_released, key)
     }
 
+    /// Clear transition edges while preserving held-key state.
     pub fn clear_edges(&mut self) {
         self.just_pressed = [0; INPUT_WORDS];
         self.just_released = [0; INPUT_WORDS];
     }
 
+    /// Apply one key state; unsupported key IDs are ignored.
     pub fn set_down(&mut self, key: u32, is_down: bool) {
         if key as usize >= INPUT_WORDS * 64 {
             return;
@@ -45,6 +50,7 @@ impl InputFrame {
         }
     }
 
+    /// Replace held keys and accumulate transitions from a sampled frame.
     pub fn accumulate_sample(&mut self, sample: Self) {
         self.down = sample.down;
         for i in 0..INPUT_WORDS {
@@ -76,6 +82,9 @@ fn set_bit(bits: &mut [u64; INPUT_WORDS], key: u32, value: bool) {
 #[derive(Clone, Default)]
 pub struct InputFrameMailbox(Arc<Mutex<InputFrame>>);
 impl InputFrameMailbox {
+    /// Publish a sampled frame without waiting for the consumer.
+    ///
+    /// Returns `false` if another side currently holds the mailbox lock.
     pub fn publish(&self, sample: InputFrame) -> bool {
         let Ok(mut pending) = self.0.try_lock() else {
             return false;
@@ -83,6 +92,9 @@ impl InputFrameMailbox {
         pending.accumulate_sample(sample);
         true
     }
+    /// Take the accumulated frame without waiting; transition edges are cleared.
+    ///
+    /// Returns `None` if another side currently holds the mailbox lock.
     pub fn take(&self) -> Option<InputFrame> {
         let Ok(mut pending) = self.0.try_lock() else {
             return None;

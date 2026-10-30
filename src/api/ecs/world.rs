@@ -16,7 +16,12 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use std::time::Instant;
 
+/// Runs the owned game ECS runtime at accepted native callback boundaries.
+///
+/// The host adapter supplies each [`GameSnapshot`]. This type processes bounded
+/// requests and returns at most one game intent for native dispatch.
 pub struct GameRuntime {
+    /// Bevy application containing game resources, schedules, and systems.
     pub app: App,
     pub(super) endpoint: GameEndpoint,
     identity_echo_queued: bool,
@@ -26,26 +31,38 @@ pub struct GameRuntime {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// Pending validated velocity effect selected for native dispatch.
 pub struct PendingVelocityIntent {
+    /// Projected entity associated with the effect.
     pub entity: Entity,
+    /// Host-local effect identifier.
     pub intent_id: u64,
+    /// Requested velocity in game units per second.
     pub velocity: [f32; 3],
 }
 
 #[derive(Debug, Clone)]
+/// Pending spawn request selected for native dispatch.
 pub struct PendingSpawnIntent {
+    /// Host-local request identifier.
     pub request_id: u64,
+    /// Validated exported-entity key.
     pub asset_key: String,
+    /// Finite row-major placement transform.
     pub matrix: Matrix4x4,
 }
 
 #[derive(Debug, Clone)]
+/// Effect ready for the native adapter to dispatch.
 pub enum PendingGameIntent {
+    /// Entity spawn request.
     Spawn(PendingSpawnIntent),
+    /// Player vehicle velocity request.
     Velocity(PendingVelocityIntent),
 }
 
 impl GameRuntime {
+    /// Create the host-driven game app from its paired channel endpoint.
     pub fn new(endpoint: GameEndpoint) -> Self {
         let mut app = create_game_app();
         app.insert_resource(crate::api::scripts::manager::ScriptManager::new(
@@ -73,6 +90,9 @@ impl GameRuntime {
             .request_load(&self.endpoint.script_loader, request)
     }
 
+    /// Import a callback snapshot, run scheduled work, and return one effect.
+    ///
+    /// `None` means no effect is ready for dispatch on this callback.
     pub fn prepare_and_run(&mut self, mut snapshot: GameSnapshot) -> Option<PendingGameIntent> {
         self.capture_frame(&mut snapshot);
         self.import_pending_intents();

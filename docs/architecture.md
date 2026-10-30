@@ -1,37 +1,55 @@
 # Architecture
 
-The project is a Windows x64 ASI modloader and code library for one supported Mad Max executable build. Its public extension format is Rhai; the Rust system seam is in-process and is not a stable external ABI.
+The project hosts code extensions inside a Windows x64 ASI for one supported Mad Max executable build. Rhai is the user-authored package format. Rust and Bevy provide the in-process runtime structure; they are not a dynamic Rust plugin ABI.
 
-## Frame flow
+## Runtime flow
 
 ```text
-MadMax.exe → game adapter → owned snapshot → ECS systems and Rhai callbacks
-           ← validated effects ← typed intents ←
+Game callback
+  -> verify supported image and callback gate
+  -> sample native state into an owned GameSnapshot
+  -> import snapshot and bounded requests (Import)
+  -> run Rust systems and Rhai callbacks (ModSystems)
+  -> validate and export typed effects (Export)
+  -> adapter applies only supported native operations
+
+Render callback
+  -> collect mod-owned Hudhook/ImGui input
+  -> run render schedule
+  -> present the DX11 developer overlay
 ```
 
-The adapter confines native pointers and ABI details. Mod systems, scripts, and developer tools exchange copied values through bounded channels. Unsupported executable fingerprints fail closed.
+The game schedule is single-threaded and callback-driven. Script loading and package discovery run on a worker; prepared results are activated at the game callback boundary. Scripts observe copied frame data and submit bounded effects. They never receive native pointers.
 
-## Ownership by module
+## Module ownership
 
-| Path | Responsibility |
+| Module | Owns |
 | --- | --- |
-| `api::game::abi` | Supported-build identity, native addresses, layouts, and ABI declarations. |
-| `api::game::adapter` | Hook lifecycle, guarded native access, telemetry sampling, and effect application. |
-| `api::ecs` | Owned frame data, schedules, mod contracts, intents, outcomes, and callback transport. |
-| `api::rhai` | Versioned script context, capability checks, conversions, helpers, and API catalog. |
-| `api::scripts` | Package discovery, validation, compilation, lifecycle, console protocol, and reload tracking. |
-| `kernel` | ASI entrypoint, startup composition, and operational logging. |
-| `devtools` | DX11 overlay, input translation, console and script presentation. |
+| `api::game::abi` | Supported build identity, image-relative addresses, layouts, and native calling-convention declarations. |
+| `api::game::adapter` | Callback hooks, guarded memory reads, sampling, thread/re-entry gates, and native effect application. |
+| `api::ecs` | Snapshot and input resources, projected entities, schedule sets, diagnostics, transport, and typed intents. |
+| `api::scripts` | Package validation, asynchronous discovery/compilation, generation lifecycle, bounded console requests and events. |
+| `api::rhai` | API v1 context, capability enforcement, conversions, pure helpers, and generated reference catalog. |
+| `kernel` | ASI entrypoint, startup composition, panic boundary, and operational logging. |
+| `devtools` | ImGui input/presentation and script/console controls; it does not own native game state. |
 
-Each module owns the data and policy named by its responsibility. Game-specific addresses stay in the ABI layer; user-facing script semantics are defined by the Rhai catalog and generated API reference.
+The adapter is the only owner of raw native interaction. The ECS projection and script context are owned-value interfaces. Research notes may describe candidate layouts or hooks that are not enabled or validated; they are not supported APIs.
+
+## Rhai callback contract
+
+Each package declares API version 1, capabilities, and callback names in `manifest.toml`. `game.post_sim` runs after a sampled game callback. `on_run` is a manually requested invocation through that same context. A callback receives one context and ignores its return value. Each loaded generation owns its state and limits. A callback error disables that generation; a failed replacement leaves the prior generation active.
+
+Callback execution validates requested capabilities and values, enforces Rhai engine limits, and bounds logs and effect budgets. The exact signatures and outward behavior are defined in [Rhai API v1](rhai-api.md), generated from the runtime catalog.
+
+## Native boundary and guarantees
+
+The adapter checks the executable fingerprint and guards readable/executable address ranges before access. These checks reduce risk; they cannot establish that a reverse-engineered layout or call is correct. Snapshot fields may be unavailable, callback-gate diagnostics may delay or reject sampling, and bounded channels may drop requests. Consumers must inspect availability and outcomes.
+
+Script vehicle writes and debug renderer calls are experimental. A successful `cargo check`, `cargo build`, or API documentation build verifies Rust compilation only; it does not validate in-game effects. Builds do not install or launch Mad Max.
 
 ## Extension boundaries
 
-- **Rhai packages** are the supported user-authored extension format. The manifest, callback contract, and capabilities are described in [Using Rhai scripts](scripting.md); the generated signatures are in [Rhai API v1](rhai-api.md).
-- **Rust systems** register in-process through `api::ecs`. Their Rust types are not a stable ABI for separately compiled mods.
-- **Game access** is version-specific. Raw pointers and native calls stay in `api::game`; extensions receive owned snapshots and submit bounded typed effects.
-- **Developer tools** inspect and control the runtime through `devtools`; they do not own game state.
-
-## Safety and support limits
-
-Addresses and layouts apply only to the recorded executable build. Successful compilation does not validate native behavior. Velocity writes and debug-renderer calls remain experimental until verified in game. Builds do not install or launch the game.
+- Use Rhai packages for user-authored extensions. Capabilities are explicit and do not grant general filesystem, network, process, FFI, or module access.
+- Use `api::ecs` source integration for systems compiled into the host. This is not a stable binary interface.
+- Keep executable-specific logic inside `api::game::abi` and `api::game::adapter`.
+- Keep presentation in `devtools`; game systems communicate through owned data and typed requests.
