@@ -1,11 +1,7 @@
 use super::api_catalog::{API_CALLBACKS, API_CAPABILITIES};
 use super::vector::ScriptMath;
 use super::*;
-use crate::{
-    runtime::GameSnapshot,
-    sdk::core::input::{self, InputFrame},
-    sdk::types::Matrix4x4,
-};
+use crate::{api::ecs::input::InputFrame, runtime::GameSnapshot, sdk::types::Matrix4x4};
 use rhai::{Array, Dynamic, Engine, Map};
 use std::sync::{
     Arc, Mutex,
@@ -428,7 +424,7 @@ struct ScriptFormatter;
 impl ScriptFormatter {
     fn fixed(&mut self, value: Dynamic) -> Result<String, Box<rhai::EvalAltResult>> {
         let value = numeric_value(value, "fixed formatter requires a number")?;
-        Ok(crate::ui::format::fixed(value))
+        Ok(crate::api::format::fixed(value))
     }
 
     fn vector(&mut self, value: Dynamic) -> Result<String, Box<rhai::EvalAltResult>> {
@@ -448,7 +444,7 @@ impl ScriptFormatter {
             })?;
             components[index] = numeric_value(value, "vector components must be numbers")?;
         }
-        Ok(crate::ui::format::vector_components(components))
+        Ok(crate::api::format::vector_components(components))
     }
 }
 
@@ -462,7 +458,7 @@ fn numeric_value(value: Dynamic, error: &'static str) -> Result<f64, Box<rhai::E
 impl CopiedInput {
     fn query(&self, key: &str, state: u8) -> Result<bool, Box<rhai::EvalAltResult>> {
         require_capability(self.allowed, "input.read")?;
-        let key = input::parse_key(key).ok_or_else(|| {
+        let key = crate::api::ecs::input::parse_key(key).ok_or_else(|| {
             Box::<rhai::EvalAltResult>::from("unknown input key; use show_keys for supported names")
         })?;
         let key = key as u32;
@@ -978,7 +974,7 @@ mod math_integration_tests {
 #[cfg(test)]
 mod debug_draw_tests {
     use super::*;
-    use crate::sdk::types::Matrix4x4;
+    use crate::api::game::abi::types::Matrix4x4;
 
     #[test]
     fn debug_line_is_available_only_during_its_bounded_invocation() {

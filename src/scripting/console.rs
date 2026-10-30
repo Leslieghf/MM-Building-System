@@ -79,7 +79,7 @@ impl ConsoleCommand {
             (Some("show_binds"), None, None, None, None) => Ok(Self::ShowBinds),
             (Some("unbind"), Some(key), None, None, None) => {
                 let key =
-                    crate::sdk::core::input::parse_key(key).ok_or("unknown key; use show_keys")?;
+                    crate::api::ecs::input::parse_key(key).ok_or("unknown key; use show_keys")?;
                 if matches!(key, imgui::Key::F1 | imgui::Key::F2 | imgui::Key::F3) {
                     return Err("F1, F2 and F3 are reserved mod controls");
                 }
@@ -129,7 +129,7 @@ fn parse_bind_command(input: &str) -> Result<ConsoleCommand, &'static str> {
     let key_end = arguments
         .find(char::is_whitespace)
         .ok_or("usage: bind <key> \"<console command>\"")?;
-    let key = crate::sdk::core::input::parse_key(&arguments[..key_end])
+    let key = crate::api::ecs::input::parse_key(&arguments[..key_end])
         .ok_or("unknown key; use show_keys")?;
     if matches!(key, imgui::Key::F1 | imgui::Key::F2 | imgui::Key::F3) {
         return Err("F1, F2 and F3 are reserved mod controls");

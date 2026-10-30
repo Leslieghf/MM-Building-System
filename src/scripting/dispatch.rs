@@ -2,7 +2,7 @@ use super::{
     ScriptEvent,
     manager::{MAX_PENDING_VELOCITY_EFFECTS, ScriptDebugDrawEffect, ScriptManager},
 };
-use crate::runtime::{CurrentGameFrame, player_vehicle_velocity_intent};
+use crate::runtime::CurrentGameFrame;
 use bevy_ecs::prelude::{Commands, Component, Entity, Query, Res, ResMut, Resource};
 
 #[derive(Resource, Default)]
@@ -39,7 +39,7 @@ pub(crate) fn dispatch_game_post_sim(
     }
     for effect in effects {
         commands.spawn((
-            player_vehicle_velocity_intent(effect.velocity),
+            crate::api::ecs::player_vehicle_velocity_intent(effect.velocity),
             ScriptVelocityOrigin(effect.origin),
         ));
     }
