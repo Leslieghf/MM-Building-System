@@ -45,6 +45,7 @@ api/
   rhai/                     script-facing API, context, and conversions
     catalog.rs              versioned API descriptions
     math.rs                 pure script math helpers
+    bindings/debug_draw.rs  bounded invocation-local debug geometry
   scripts/                  packages, compilation, lifecycle, console protocol
     console.rs              bounded command/event transport and output history
 devtools/
