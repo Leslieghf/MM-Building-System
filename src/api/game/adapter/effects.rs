@@ -1,5 +1,7 @@
 //! Validated application of script effects to the live game.
+mod debug_draw;
 use super::*;
+pub(super) use debug_draw::*;
 
 pub(in crate::api::game::adapter) fn apply_velocity_intent(
     pending: PendingVelocityIntent,

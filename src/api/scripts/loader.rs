@@ -57,6 +57,113 @@ enum LoaderRequest {
     SetAutoReload { id: ScriptId, enabled: bool },
 }
 
+struct LoaderWorker {
+    root: Result<PathBuf, String>,
+    canonical_root: Option<PathBuf>,
+    factory: RhaiEngineFactory,
+    requests: Receiver<LoaderRequest>,
+    results: SyncSender<ScriptLoadResult>,
+    discoveries: SyncSender<ScriptDiscoveryResult>,
+    auto_reload: SyncSender<AutoReloadNotice>,
+    overflow: Arc<AtomicUsize>,
+    discovery_overflow: Arc<AtomicUsize>,
+    stopped: Arc<AtomicBool>,
+    watches: WorkerWatches,
+}
+
+impl LoaderWorker {
+    fn run(mut self) {
+        loop {
+            self.watches.flush(&self.auto_reload);
+            match self.requests.recv_timeout(Duration::from_millis(500)) {
+                Ok(request) => {
+                    if !self.handle(request) {
+                        break;
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {
+                    if let Ok(root) = &self.root {
+                        self.watches.poll(root, &self.auto_reload);
+                    }
+                }
+            }
+        }
+        self.stopped.store(true, Ordering::Release);
+    }
+
+    fn handle(&mut self, request: LoaderRequest) -> bool {
+        match request {
+            LoaderRequest::SetAutoReload { id, enabled } => {
+                if let Ok(root) = &self.root {
+                    self.watches.configure(root, id, enabled);
+                }
+                true
+            }
+            LoaderRequest::Load(request) => self.handle_load(request),
+            LoaderRequest::Discover(request) => self.handle_discovery(request),
+        }
+    }
+
+    fn handle_load(&mut self, request: LoadScriptRequest) -> bool {
+        let prepared = self.prepare_request(&request);
+        let result = prepared.map_err(|message| ScriptLoadFailure {
+            request_id: request.request_id,
+            id: request.id,
+            message: bounded_text(&message, MAX_EVENT_BYTES),
+        });
+        match self.results.try_send(result) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_)) => {
+                self.overflow.fetch_add(1, Ordering::Relaxed);
+                true
+            }
+            Err(TrySendError::Disconnected(_)) => false,
+        }
+    }
+
+    fn prepare_request(&mut self, request: &LoadScriptRequest) -> Result<PreparedScript, String> {
+        let configured = self.root.as_ref().map_err(Clone::clone)?;
+        if self.canonical_root.is_none() {
+            self.canonical_root = Some(
+                configured
+                    .canonicalize()
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        prepare(
+            self.canonical_root.as_ref().expect("root resolved"),
+            request,
+            self.factory,
+        )
+    }
+
+    fn handle_discovery(&self, request: DiscoverScriptsRequest) -> bool {
+        let configured = self.root.as_ref().ok().map(PathBuf::as_path);
+        let result = discovery::discover(configured, &self.root, request.request_id);
+        match self.discoveries.try_send(result) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_)) => {
+                self.discovery_overflow.fetch_add(1, Ordering::Relaxed);
+                true
+            }
+            Err(TrySendError::Disconnected(_)) => false,
+        }
+    }
+}
+
+fn resolve_script_root(root: Option<PathBuf>) -> Result<PathBuf, String> {
+    let Some(root) = root else {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        return Ok(executable
+            .parent()
+            .ok_or("game executable has no parent")?
+            .join("MadMaxModding")
+            .join("scripts"));
+    };
+    Ok(root)
+}
+
 /// The worker owns all filesystem access and compilation. Drop never joins it.
 pub struct ScriptLoader {
     requests: SyncSender<LoaderRequest>,
@@ -112,75 +219,20 @@ impl ScriptLoader {
         let spawn = std::thread::Builder::new()
             .name("madmax-script-loader".into())
             .spawn(move || {
-                let root = root.map(Ok).unwrap_or_else(|| {
-                    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-                    Ok::<_, String>(
-                        exe.parent()
-                            .ok_or("game executable has no parent")?
-                            .join("MadMaxModding")
-                            .join("scripts"),
-                    )
-                });
-                let mut canonical_root: Option<PathBuf> = None;
-                let mut watches = WorkerWatches::new(auto_reload_overflow_tx);
-                loop {
-                    watches.flush(&auto_reload_tx);
-                    let request = match request_rx.recv_timeout(Duration::from_millis(500)) {
-                        Ok(request) => request,
-                        Err(RecvTimeoutError::Timeout) => {
-                            if let Ok(configured) = &root {
-                                watches.poll(configured, &auto_reload_tx);
-                            }
-                            continue;
-                        }
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    };
-                    match request {
-                        LoaderRequest::SetAutoReload { id, enabled } => {
-                            if let Ok(configured) = &root {
-                                watches.configure(configured, id, enabled);
-                            }
-                        }
-                        LoaderRequest::Load(request) => {
-                            let prepared = (|| {
-                                let configured = root.as_ref().map_err(Clone::clone)?;
-                                if canonical_root.is_none() {
-                                    canonical_root =
-                                        Some(configured.canonicalize().map_err(|e| e.to_string())?);
-                                }
-                                prepare(
-                                    canonical_root.as_ref().expect("root resolved"),
-                                    &request,
-                                    factory,
-                                )
-                            })();
-                            let result = prepared.map_err(|message| ScriptLoadFailure {
-                                request_id: request.request_id,
-                                id: request.id,
-                                message: bounded_text(&message, MAX_EVENT_BYTES),
-                            });
-                            match result_tx.try_send(result) {
-                                Ok(()) => {}
-                                Err(TrySendError::Full(_)) => {
-                                    worker_overflow.fetch_add(1, Ordering::Relaxed);
-                                }
-                                Err(TrySendError::Disconnected(_)) => break,
-                            }
-                        }
-                        LoaderRequest::Discover(request) => {
-                            let configured = root.as_ref().ok().map(PathBuf::as_path);
-                            let result = discovery::discover(configured, &root, request.request_id);
-                            match discovery_result_tx.try_send(result) {
-                                Ok(()) => {}
-                                Err(TrySendError::Full(_)) => {
-                                    worker_discovery_overflow.fetch_add(1, Ordering::Relaxed);
-                                }
-                                Err(TrySendError::Disconnected(_)) => break,
-                            }
-                        }
-                    }
+                LoaderWorker {
+                    root: resolve_script_root(root),
+                    canonical_root: None,
+                    factory,
+                    requests: request_rx,
+                    results: result_tx,
+                    discoveries: discovery_result_tx,
+                    auto_reload: auto_reload_tx,
+                    overflow: worker_overflow,
+                    discovery_overflow: worker_discovery_overflow,
+                    stopped: worker_stopped,
+                    watches: WorkerWatches::new(auto_reload_overflow_tx),
                 }
-                worker_stopped.store(true, Ordering::Release);
+                .run()
             });
         if spawn.is_err() {
             stopped.store(true, Ordering::Release);

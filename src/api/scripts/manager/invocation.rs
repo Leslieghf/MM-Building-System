@@ -15,27 +15,9 @@ pub(super) fn invoke(
     debug_work_capacity: usize,
     debug_effects: &mut Vec<ScriptDebugDrawEffect>,
 ) {
-    let mut event = ScriptEvent {
-        request_id,
-        id: id.clone(),
-        generation: script.generation,
-        phase: ScriptPhaseId::GamePostSim,
-        callback: function.to_owned(),
-        kind: ScriptEventKind::Log,
-        status: None,
-        auto_reload: script.auto_reload,
-        reload_error: script.reload_error.clone(),
-        line: None,
-        column: None,
-        text: String::new(),
-    };
+    let event = build_event(request_id, id, script, function);
     if script.status != ScriptStatus::Active {
-        if request_id.is_some() {
-            event.kind = ScriptEventKind::Error;
-            event.status = Some(script.status);
-            event.text = "on_run skipped: generation disabled by an earlier callback".to_owned();
-            sink.emit(event);
-        }
+        report_disabled_run(sink, event, script.status);
         return;
     }
     let log = InvocationLog::new(sink.clone(), event.clone());
@@ -59,61 +41,150 @@ pub(super) fn invoke(
         write.clone(),
         debug.clone(),
     );
-    let result = engine.call_fn_with_options::<Dynamic>(
+    let result = run_callback(engine, script, function, context);
+    log.finish();
+    let velocity_effect = write.finish();
+    let debug_primitives = debug.finish();
+    if let Some(failure) = callback_failure(script, &result) {
+        report_callback_failure(sink, script, event, failure);
+    } else {
+        publish_callback_effects(
+            sink,
+            event,
+            request_id,
+            script.status,
+            velocity_effect,
+            debug_primitives,
+            effects,
+            debug_effects,
+        );
+    }
+}
+
+fn build_event(
+    request_id: Option<u64>,
+    id: &ScriptId,
+    script: &ActiveScript,
+    function: &str,
+) -> ScriptEvent {
+    ScriptEvent {
+        request_id,
+        id: id.clone(),
+        generation: script.generation,
+        phase: ScriptPhaseId::GamePostSim,
+        callback: function.to_owned(),
+        kind: ScriptEventKind::Log,
+        status: None,
+        auto_reload: script.auto_reload,
+        reload_error: script.reload_error.clone(),
+        line: None,
+        column: None,
+        text: String::new(),
+    }
+}
+
+fn run_callback(
+    engine: &Engine,
+    script: &mut ActiveScript,
+    function: &str,
+    context: GamePostSimContext,
+) -> Result<Dynamic, Box<rhai::EvalAltResult>> {
+    engine.call_fn_with_options::<Dynamic>(
         CallFnOptions::new().eval_ast(false),
         &mut script.scope,
         &script.ast,
         function,
         (context,),
-    );
-    log.finish();
-    let velocity_effect = write.finish();
-    let debug_primitives = debug.finish();
-    let error = match result {
-        Err(error) => {
-            event.line = error.position().line();
-            event.column = error.position().position();
-            Some(bounded_text(&error.to_string(), MAX_EVENT_BYTES))
-        }
-        Ok(_) => {
-            let state = script.scope.get_value::<Dynamic>("state");
-            if state.as_ref().is_none_or(|state| {
-                !state.is::<Map>() || !valid_state(state, 0, &mut MAX_STATE_VALUES.clone())
-            }) {
-                Some("state must remain a bounded map of maps, arrays, strings, numbers, booleans and ()".to_owned())
-            } else {
-                None
-            }
-        }
-    };
-    if let Some(error) = error {
-        script.status = ScriptStatus::Disabled;
-        // Release any partially mutated state and retained context/log objects.
-        script.scope.clear();
-        event.kind = ScriptEventKind::Error;
-        event.status = Some(ScriptStatus::Disabled);
-        event.text = error;
+    )
+}
+
+struct CallbackFailure {
+    message: String,
+    line: Option<usize>,
+    column: Option<usize>,
+}
+
+fn callback_failure(
+    script: &ActiveScript,
+    result: &Result<Dynamic, Box<rhai::EvalAltResult>>,
+) -> Option<CallbackFailure> {
+    if let Err(error) = result {
+        return Some(CallbackFailure {
+            message: bounded_text(&error.to_string(), MAX_EVENT_BYTES),
+            line: error.position().line(),
+            column: error.position().position(),
+        });
+    }
+    let state = script.scope.get_value::<Dynamic>("state");
+    state
+        .as_ref()
+        .is_none_or(|state| {
+            !state.is::<Map>() || !valid_state(state, 0, &mut MAX_STATE_VALUES.clone())
+        })
+        .then(|| CallbackFailure {
+            message:
+                "state must remain a bounded map of maps, arrays, strings, numbers, booleans and ()"
+                    .to_owned(),
+            line: None,
+            column: None,
+        })
+}
+
+fn report_disabled_run(sink: &ScriptEventSink, mut event: ScriptEvent, status: ScriptStatus) {
+    if event.request_id.is_none() {
+        return;
+    }
+    event.kind = ScriptEventKind::Error;
+    event.status = Some(status);
+    event.text = "on_run skipped: generation disabled by an earlier callback".to_owned();
+    sink.emit(event);
+}
+
+fn report_callback_failure(
+    sink: &ScriptEventSink,
+    script: &mut ActiveScript,
+    mut event: ScriptEvent,
+    failure: CallbackFailure,
+) {
+    script.status = ScriptStatus::Disabled;
+    // Release partially mutated state and retained context/log objects.
+    script.scope.clear();
+    event.kind = ScriptEventKind::Error;
+    event.status = Some(ScriptStatus::Disabled);
+    event.line = failure.line;
+    event.column = failure.column;
+    event.text = failure.message;
+    sink.emit(event);
+}
+
+fn publish_callback_effects(
+    sink: &ScriptEventSink,
+    mut event: ScriptEvent,
+    request_id: Option<u64>,
+    status: ScriptStatus,
+    velocity: Option<[f32; 3]>,
+    primitives: Vec<DebugPrimitive>,
+    effects: &mut Vec<VehicleVelocityEffect>,
+    debug_effects: &mut Vec<ScriptDebugDrawEffect>,
+) {
+    if let Some(velocity) = velocity {
+        let mut origin = event.clone();
+        origin.kind = ScriptEventKind::Status;
+        origin.text = "vehicle velocity intent queued; awaiting native adapter".to_owned();
+        sink.emit(origin.clone());
+        effects.push(VehicleVelocityEffect { velocity, origin });
+    }
+    for primitive in primitives {
+        debug_effects.push(ScriptDebugDrawEffect {
+            primitive,
+            origin: event.clone(),
+        });
+    }
+    if request_id.is_some() {
+        event.kind = ScriptEventKind::Status;
+        event.status = Some(status);
+        event.text = "on_run completed".to_owned();
         sink.emit(event);
-    } else {
-        if let Some(velocity) = velocity_effect {
-            let mut origin = event.clone();
-            origin.kind = ScriptEventKind::Status;
-            origin.text = "vehicle velocity intent queued; awaiting native adapter".to_owned();
-            sink.emit(origin.clone());
-            effects.push(VehicleVelocityEffect { velocity, origin });
-        }
-        for primitive in debug_primitives {
-            debug_effects.push(ScriptDebugDrawEffect {
-                primitive,
-                origin: event.clone(),
-            });
-        }
-        if request_id.is_some() {
-            event.kind = ScriptEventKind::Status;
-            event.status = Some(script.status);
-            event.text = "on_run completed".to_owned();
-            sink.emit(event);
-        }
     }
 }
 fn valid_state(value: &Dynamic, depth: usize, remaining: &mut usize) -> bool {

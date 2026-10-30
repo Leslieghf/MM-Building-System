@@ -1,11 +1,9 @@
 //! Read-only sampling that turns validated native observations into owned values.
 mod actors;
 mod camera;
-mod effects;
 mod telemetry;
 pub(super) use actors::*;
 pub(super) use camera::*;
-pub(super) use effects::*;
 mod world_query_capture;
 pub(in crate::api::game::adapter) use telemetry::*;
 pub(in crate::api::game::adapter) use world_query_capture::*;

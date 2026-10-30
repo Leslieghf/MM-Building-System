@@ -80,8 +80,10 @@ const API_METHODS: &[&str] = &[
     "ctx.gizmos.bounds_convex_vertices(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; experimental slot 39; this accepts bounds, not a custom vertex buffer]",
     "ctx.vehicle.set_velocity(#{x: number, y: number, z: number}) -> () [game.read + game.vehicle.write; finite components in [-250,250] units/s; one request per invocation; game.post_sim native adapter]",
 ];
-const API_UNAVAILABLE: &str = "Input is sampled from the mod's Hudhook/ImGui event stream and forwarded as a bounded snapshot; it is not Mad Max's native keymap or controller polling API. Unavailable vectors/scalars are (); vector = #{x: float, y: float, z: float}; RGBA = #{r: float, g: float, b: float, a: float}, each component in [0,1]. available means some copied object data exists, not that every field exists. sample_age_seconds reports freshness. Undeclared capability access errors; frame metadata and pure ctx.math helpers are universal. Script positions, vectors, transforms, gizmos, and vehicle velocity writes use +X right, +Y up, -Z forward with no Z reflection. Transforms remain 16-number row-major arrays, with translation at indices 12–14. Math vector inputs must contain exactly numeric x, y, z components (integer or float), each finite and within [-100000,100000]. Math vector results are fresh maps with finite components in [-100000,100000]; arguments are never mutated. Math scale factors and dot/length/distance scalar results must be finite but have no spatial component bound. Malformed, non-finite, out-of-range inputs or results raise script errors. All ctx.math methods require no capability. normalize and direction return () for magnitude/distance <= 1e-12; other invalid input raises an error. lerp requires finite t in [0,1]. Vehicle writes require available copied velocity; only successful callbacks publish effects. Debug drawing submits copied world-space primitives through CDebugRenderer during game.post_sim; each invocation handle expires after the callback. Coordinates must be finite and within ±100000, colors are finite RGBA in [0,1], radii are [0.01,10000], and transforms are 16 finite values in Mad Max matrix order (translation at elements 12–14), within ±100000. Calls are bounded to 32 primitives and 256 estimated geometry segments per invocation, plus 128 primitives and 512 geometry segments per game callback. Bounds-shape slots 36–39 use a matrix-pointer argument inferred from the wrapper and remain experimental. Native visibility and lifetime depend on the game's render queue.";
-const API_EFFECT: &str = "reads copied game data; script state/output writes; bounded current-player-vehicle velocity intent; experimental bounded world-space CDebugRenderer submissions through game.post_sim adapter";
+const API_ERRORS: &str = "Undeclared capabilities, malformed values, non-finite numbers, and values outside documented bounds raise script errors. A callback error disables that script generation; a failed reload leaves the active generation running.";
+const API_AVAILABILITY: &str = "Unavailable values are `()`. `available` means copied object data exists; individual fields can still be unavailable. `sample_age_seconds` reports the age of the copied sample. Input comes from the mod's Hudhook/ImGui event stream, not the game's native keymap or controller polling API.";
+const API_COORDINATES: &str = "Vectors use +X right, +Y up, and -Z forward. Transforms are 16-number row-major arrays in Mad Max matrix order, with translation at indices 12–14. Vector maps use numeric `x`, `y`, and `z`; RGBA maps use `r`, `g`, `b`, and `a`. Math inputs are not mutated; returned vectors are fresh maps.";
+const API_LIMITS: &str = "Math vector components and results are finite and within [-100000, 100000]. Scalar math arguments/results must be finite; `lerp` requires `t` in [0, 1]. `normalize` and `direction` return `()` for magnitude/distance <= 1e-12. Debug coordinates and transforms are finite and within ±100000, colors are in [0, 1], and radii are in [0.01, 10000]. Debug drawing is limited to 32 primitives and 256 estimated geometry segments per invocation, and 128 primitives and 512 segments per game callback. Vehicle velocity writes require copied velocity and are published only after successful callbacks. Bounds-shape methods remain experimental; their matrix-pointer argument and render visibility/lifetime depend on native behavior.";
 
 pub const API_CALLBACKS: &[ApiCallbackDoc] = &[
     ApiCallbackDoc {
@@ -89,16 +91,16 @@ pub const API_CALLBACKS: &[ApiCallbackDoc] = &[
         phase: "game.post_sim",
         values: API_VALUES,
         methods: API_METHODS,
-        unavailable: API_UNAVAILABLE,
-        effect: API_EFFECT,
+        unavailable: API_AVAILABILITY,
+        effect: "Runs after each game simulation frame; reads copied data and may queue bounded vehicle or debug-draw effects",
     },
     ApiCallbackDoc {
         callback: "on_run",
         phase: "game.post_sim",
         values: API_VALUES,
         methods: API_METHODS,
-        unavailable: API_UNAVAILABLE,
-        effect: API_EFFECT,
+        unavailable: API_AVAILABILITY,
+        effect: "Runs only on request with the latest copied frame; may queue bounded vehicle or debug-draw effects",
     },
 ];
 
@@ -114,22 +116,44 @@ pub fn render_markdown() -> String {
     for capability in API_CAPABILITIES {
         output.push_str(&format!("- `{capability}`\n"));
     }
+    output.push_str("\n## Callback entry points\n\n");
     for descriptor in API_CALLBACKS {
         output.push_str(&format!(
-            "\n## `{}` — `{}`\n\nAPI version: **{}**\n\nCallback signature: `{}(ctx: MadMaxPostSimContext)`; return value ignored.\n\nEffect: {}.\n\n### Context values\n\n",
-            descriptor.callback, descriptor.phase, API_VERSION, descriptor.callback, descriptor.effect
-        ));
-        for value in descriptor.values {
-            output.push_str(&format!("- `{value}`\n"));
-        }
-        output.push_str("\n### Methods\n\n");
-        for method in descriptor.methods {
-            output.push_str(&format!("- `{method}`\n"));
-        }
-        output.push_str(&format!(
-            "\n### Errors, availability, and limits\n\n{}\n",
-            descriptor.unavailable
+            "- `{}` in `{}`: `{}(ctx: MadMaxPostSimContext)`; return value ignored. {}.\n",
+            descriptor.callback, descriptor.phase, descriptor.callback, descriptor.effect
         ));
     }
+    let api = &API_CALLBACKS[0];
+    output.push_str("\n## Shared callback context\n\nAPI version: **1**. Both callbacks receive the same context and have the same capability rules.\n\n### Values\n\n");
+    for value in api.values {
+        output.push_str(&format!("- `{value}`\n"));
+    }
+    render_methods(&mut output, api.methods);
+    output.push_str(&format!(
+        "\n### Errors\n\n{API_ERRORS}\n\n### Availability\n\n{API_AVAILABILITY}\n\n### Coordinates and values\n\n{API_COORDINATES}\n\n### Limits and native behavior\n\n{API_LIMITS}\n"
+    ));
     output
+}
+
+fn render_methods(output: &mut String, methods: &[&str]) {
+    let groups: [(&str, &[&str]); 5] = [
+        ("Math", &["ctx.math."]),
+        ("Input", &["ctx.input."]),
+        ("Logging and formatting", &["ctx.log.", "ctx.format."]),
+        ("Debug drawing", &["ctx.gizmos."]),
+        ("Vehicle effects", &["ctx.vehicle."]),
+    ];
+    for (title, prefixes) in groups {
+        let matching = methods
+            .iter()
+            .filter(|method| prefixes.iter().any(|prefix| method.starts_with(prefix)));
+        let rows: Vec<_> = matching.collect();
+        if rows.is_empty() {
+            continue;
+        }
+        output.push_str(&format!("\n### {title}\n\n"));
+        for method in rows {
+            output.push_str(&format!("- `{method}`\n"));
+        }
+    }
 }

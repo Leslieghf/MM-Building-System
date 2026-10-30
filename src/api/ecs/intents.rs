@@ -44,6 +44,14 @@ pub struct SpawnRequestId(pub u64);
 pub struct SpawnAssetKey(String);
 
 impl SpawnAssetKey {
+    /// Validate and own a normalized exported-entity key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpawnRequestError::InvalidAssetKey`] when the key is empty,
+    /// too long, non-ASCII, outside `editor/entities/`, or contains an invalid
+    /// path segment.
+    ///
     pub fn parse(value: impl Into<String>) -> Result<Self, SpawnRequestError> {
         let value = value.into();
         let valid = !value.is_empty()
@@ -77,6 +85,12 @@ pub struct SpawnTransform {
 }
 
 impl SpawnTransform {
+    /// Accept a finite row-major transform for a spawn request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpawnRequestError::InvalidTransform`] if any matrix element is
+    /// non-finite.
     pub fn new(matrix: Matrix4x4) -> Result<Self, SpawnRequestError> {
         if matrix
             .values
@@ -131,6 +145,12 @@ pub struct SpawnOutcome {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpawnOutcomeRecord(pub SpawnOutcome);
 
+/// Build a queued spawn bundle from a validated asset key and transform.
+///
+/// # Errors
+///
+/// Returns [`SpawnRequestError::InvalidAssetKey`] or
+/// [`SpawnRequestError::InvalidTransform`] when either input fails validation.
 pub fn spawn_entity_intent(
     asset_key: impl Into<String>,
     matrix: Matrix4x4,
@@ -141,7 +161,10 @@ pub fn spawn_entity_intent(
     Ok((request_id, asset_key, transform, SpawnLifecycle::Queued))
 }
 
-/// Enqueue a velocity effect for the vehicle occupied when the native adapter consumes it.
+/// Build an effect for the vehicle occupied when the native adapter consumes it.
+///
+/// This constructor does not validate the velocity. The game adapter validates
+/// finite components and the supported speed range before applying it.
 pub fn player_vehicle_velocity_intent(velocity: [f32; 3]) -> impl Bundle {
     (
         TargetCurrentPlayerVehicle,

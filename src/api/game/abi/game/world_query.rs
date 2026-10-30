@@ -456,7 +456,7 @@ pub type EnqueueWorldRayQueryRequestFn = unsafe extern "system" fn(
 /// Runtime-observed base query-context initializer ABI. Its callers pass zero
 /// values, then install a filter-specific vftable; do not treat it as a safe
 /// constructor for arbitrary Rust-created contexts.
-
+///
 pub type WorldQueryContextInitializeFn = unsafe extern "system" fn(
     context: *mut c_void,
     exclude_filter_info_mask: u32,
@@ -472,12 +472,12 @@ pub type RaycastFilterSetOptionFn = unsafe extern "system" fn(context: *mut c_vo
 /// the native camera-script call site. The camera caller uses start distance
 /// zero and a caller-derived finite end distance; it passes `option8=0`,
 /// `mode_flag=false`, `query_group=0`, and `filter_override=null`.
-
+///
 /// The helper forms a dispatch word as `query_group * 0x10000 + 0x10` when
 /// `mode_flag` is true, or `query_group * 0x10000 + 0x12` otherwise; a
 /// non-null explicit override replaces that word. `option8` is present in the
 /// ABI but is not consumed in the captured helper.
-
+///
 /// Its raw status is true exactly when `query_context + 0x60` is non-null
 /// after the call. The pointee meaning is unresolved, so this is not a
 /// universal hit flag. The camera caller ignores the Boolean and derives its

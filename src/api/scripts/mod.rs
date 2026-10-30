@@ -13,8 +13,15 @@ pub const MAX_EVENT_BYTES: usize = 1024;
 pub const MAX_LOGS_PER_INVOCATION: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Validated package identifier used by script requests and status events.
 pub struct ScriptId(String);
 impl ScriptId {
+    /// Parse a lowercase package identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the identifier is empty, longer than 64 bytes,
+    /// contains unsupported characters, or uses a reserved Windows device name.
     pub fn parse(value: impl Into<String>) -> Result<Self, &'static str> {
         let value = value.into();
         if value.is_empty()
@@ -33,6 +40,7 @@ impl ScriptId {
         }
         Ok(Self(value))
     }
+    /// Return the canonical identifier text.
     pub fn as_str(&self) -> &str {
         &self.0
     }

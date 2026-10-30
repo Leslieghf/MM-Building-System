@@ -2,7 +2,7 @@
 
 The project is a Windows x64 ASI modloader and code library for one supported Mad Max executable build. Its public extension format is Rhai; the Rust system seam is in-process and is not a stable external ABI.
 
-## Runtime flow
+## Frame flow
 
 ```text
 MadMax.exe → game adapter → owned snapshot → ECS systems and Rhai callbacks
@@ -11,7 +11,7 @@ MadMax.exe → game adapter → owned snapshot → ECS systems and Rhai callback
 
 The adapter confines native pointers and ABI details. Mod systems, scripts, and developer tools exchange copied values through bounded channels. Unsupported executable fingerprints fail closed.
 
-## Code ownership
+## Ownership by module
 
 | Path | Responsibility |
 | --- | --- |
@@ -25,6 +25,13 @@ The adapter confines native pointers and ABI details. Mod systems, scripts, and 
 
 Each module owns the data and policy named by its responsibility. Game-specific addresses stay in the ABI layer; user-facing script semantics are defined by the Rhai catalog and generated API reference.
 
-## Support boundary
+## Extension boundaries
+
+- **Rhai packages** are the supported user-authored extension format. The manifest, callback contract, and capabilities are described in [Using Rhai scripts](scripting.md); the generated signatures are in [Rhai API v1](rhai-api.md).
+- **Rust systems** register in-process through `api::ecs`. Their Rust types are not a stable ABI for separately compiled mods.
+- **Game access** is version-specific. Raw pointers and native calls stay in `api::game`; extensions receive owned snapshots and submit bounded typed effects.
+- **Developer tools** inspect and control the runtime through `devtools`; they do not own game state.
+
+## Safety and support limits
 
 Addresses and layouts apply only to the recorded executable build. Successful compilation does not validate native behavior. Velocity writes and debug-renderer calls remain experimental until verified in game. Builds do not install or launch the game.

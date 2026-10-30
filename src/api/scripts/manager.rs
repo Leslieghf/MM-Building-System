@@ -661,75 +661,97 @@ impl ScriptManager {
         let mut effects = Vec::new();
         let mut debug_draws: Vec<ScriptDebugDrawEffect> = Vec::new();
         let capacity = available_slots.min(MAX_VELOCITY_EFFECTS_PER_PHASE);
+        self.dispatch_queued_runs(snapshot, capacity, &mut effects, &mut debug_draws);
+        self.dispatch_frame_callbacks(snapshot, capacity, &mut effects, &mut debug_draws);
+        self.retain_current_effects(&mut effects, &mut debug_draws);
+        (effects, debug_draws)
+    }
+
+    fn dispatch_queued_runs(
+        &mut self,
+        snapshot: GameSnapshot,
+        capacity: usize,
+        effects: &mut Vec<VehicleVelocityEffect>,
+        debug_draws: &mut Vec<ScriptDebugDrawEffect>,
+    ) {
         let mut runs = std::mem::take(&mut self.runs);
         runs.sort_by(|a, b| a.0.cmp(&b.0));
-        // All one-shots precede all recurring callbacks. Duplicate requests run once each.
+        let engine = &self.engine;
+        let events = &self.events;
+        // One-shot requests run before recurring callbacks; duplicate requests remain distinct.
         for (id, generation, request_id) in runs {
-            if let Some(script) = self.active.get_mut(&id)
-                && script.generation == generation
-                && let Some(function) = script.on_run.clone()
-            {
-                invocation::invoke(
-                    &self.engine,
-                    &self.events,
-                    &id,
-                    script,
-                    &function,
-                    snapshot,
-                    request_id,
-                    capacity,
-                    &mut effects,
-                    MAX_DEBUG_DRAWS_PER_PHASE.saturating_sub(debug_draws.len()),
-                    MAX_DEBUG_DRAW_WORK_PER_PHASE.saturating_sub(
-                        debug_draws
-                            .iter()
-                            .map(|effect| effect.primitive.work_cost())
-                            .sum(),
-                    ),
-                    &mut debug_draws,
-                );
+            let Some(script) = self.active.get_mut(&id) else {
+                continue;
+            };
+            if script.generation != generation {
+                continue;
             }
+            let Some(function) = script.on_run.clone() else {
+                continue;
+            };
+            invocation::invoke(
+                engine,
+                events,
+                &id,
+                script,
+                &function,
+                snapshot,
+                request_id,
+                capacity,
+                effects,
+                remaining_debug_draws(debug_draws),
+                remaining_debug_work(debug_draws),
+                debug_draws,
+            );
         }
+    }
+
+    fn dispatch_frame_callbacks(
+        &mut self,
+        snapshot: GameSnapshot,
+        capacity: usize,
+        effects: &mut Vec<VehicleVelocityEffect>,
+        debug_draws: &mut Vec<ScriptDebugDrawEffect>,
+    ) {
+        let engine = &self.engine;
+        let events = &self.events;
         for (id, script) in &mut self.active {
-            if let Some(function) = script.callbacks.get(&ScriptPhaseId::GamePostSim).cloned() {
-                invocation::invoke(
-                    &self.engine,
-                    &self.events,
-                    id,
-                    script,
-                    &function,
-                    snapshot,
-                    None,
-                    capacity,
-                    &mut effects,
-                    MAX_DEBUG_DRAWS_PER_PHASE.saturating_sub(debug_draws.len()),
-                    MAX_DEBUG_DRAW_WORK_PER_PHASE.saturating_sub(
-                        debug_draws
-                            .iter()
-                            .map(|effect| effect.primitive.work_cost())
-                            .sum(),
-                    ),
-                    &mut debug_draws,
-                );
-            }
+            let Some(function) = script.callbacks.get(&ScriptPhaseId::GamePostSim).cloned() else {
+                continue;
+            };
+            invocation::invoke(
+                engine,
+                events,
+                id,
+                script,
+                &function,
+                snapshot,
+                None,
+                capacity,
+                effects,
+                remaining_debug_draws(debug_draws),
+                remaining_debug_work(debug_draws),
+                debug_draws,
+            );
         }
-        effects.retain(|effect| {
-            if self.effect_is_current(&effect.origin) {
-                true
-            } else {
-                self.report_effect_cancelled(effect.origin.clone());
-                false
-            }
-        });
-        debug_draws.retain(|effect| {
-            if self.effect_is_current(&effect.origin) {
-                true
-            } else {
-                self.report_effect_cancelled(effect.origin.clone());
-                false
-            }
-        });
-        (effects, debug_draws)
+    }
+
+    fn retain_current_effects(
+        &self,
+        effects: &mut Vec<VehicleVelocityEffect>,
+        debug_draws: &mut Vec<ScriptDebugDrawEffect>,
+    ) {
+        effects.retain(|effect| self.retain_effect(&effect.origin));
+        debug_draws.retain(|effect| self.retain_effect(&effect.origin));
+    }
+
+    fn retain_effect(&self, origin: &ScriptEvent) -> bool {
+        if self.effect_is_current(origin) {
+            true
+        } else {
+            self.report_effect_cancelled(origin.clone());
+            false
+        }
     }
     fn cancel_runs(&mut self, id: &ScriptId) {
         for (queued, generation, request_id) in &self.runs {
@@ -746,6 +768,19 @@ impl ScriptManager {
         self.runs.retain(|(queued, _, _)| queued != id);
     }
 }
+
+fn remaining_debug_draws(draws: &[ScriptDebugDrawEffect]) -> usize {
+    MAX_DEBUG_DRAWS_PER_PHASE.saturating_sub(draws.len())
+}
+
+fn remaining_debug_work(draws: &[ScriptDebugDrawEffect]) -> usize {
+    let used = draws
+        .iter()
+        .map(|effect| effect.primitive.work_cost())
+        .sum();
+    MAX_DEBUG_DRAW_WORK_PER_PHASE.saturating_sub(used)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::loader::{LoadScriptRequest, ScriptLoadResult, ScriptLoader};

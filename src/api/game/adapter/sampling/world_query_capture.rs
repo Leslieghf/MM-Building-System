@@ -78,6 +78,31 @@ pub(in crate::api::game::adapter) fn begin_raycast_filter_hit_capture(
         return None;
     }
     let candidate_sample = sample.candidate_samples.get(callback_slot)?;
+    let observation = read_filter_observation(filter, candidate_chain)?;
+    let hit = reserve_filter_hit(candidate_sample)?;
+    publish_filter_observation(hit, &observation);
+    Some(RaycastFilterHitCapture {
+        sample: hit,
+        filter_context: observation.filter_address,
+    })
+}
+
+struct RaycastFilterObservation {
+    filter_address: usize,
+    filter_vtable: usize,
+    exclude_filter_info_mask: u32,
+    required_filter_info_mask: u32,
+    candidate_node: usize,
+    candidate_info: u32,
+    candidate_owner: usize,
+    ignored_owner: usize,
+    selected_shape: usize,
+}
+
+fn read_filter_observation(
+    filter: *mut c_void,
+    candidate_chain: *mut c_void,
+) -> Option<RaycastFilterObservation> {
     let filter_address = filter as usize;
     let chain_address = candidate_chain as usize;
     if filter_address < 0x10000
@@ -87,69 +112,80 @@ pub(in crate::api::game::adapter) fn begin_raycast_filter_hit_capture(
     {
         return None;
     }
-
     let candidate_node = unsafe { ptr::read_unaligned(chain_address as *const usize) };
     if candidate_node < 0x10000 || !readable_span(candidate_node, 0x30) {
         return None;
     }
-    let candidate_info = unsafe { ptr::read_unaligned((candidate_node + 0x18) as *const u32) };
-    let candidate_owner = unsafe { ptr::read_unaligned((candidate_node + 0x28) as *const usize) };
     let filter_vtable = unsafe { ptr::read_unaligned(filter_address as *const usize) };
-    let exclude_filter_info_mask =
-        unsafe { ptr::read_unaligned((filter_address + 0x70) as *const u32) };
-    let required_filter_info_mask =
-        unsafe { ptr::read_unaligned((filter_address + 0x74) as *const u32) };
-    let filter_ignored_owner = if filter_vtable == STEAM_IMAGE_BASE + C_IGNORE_FILTER_VFTABLE_RVA
-        && readable_span(filter_address, 0xA8)
-    {
-        let begin_pointer = unsafe {
-            ptr::read_unaligned(
-                (filter_address + C_IGNORE_FILTER_OWNER_VECTOR_BEGIN_OFFSET) as *const usize,
-            )
-        };
-        let end_pointer = unsafe {
-            ptr::read_unaligned(
-                (filter_address + C_IGNORE_FILTER_OWNER_VECTOR_END_OFFSET) as *const usize,
-            )
-        };
-        if begin_pointer < end_pointer
-            && end_pointer - begin_pointer <= 0x1000
-            && readable_span(begin_pointer, size_of::<usize>())
-        {
-            unsafe { ptr::read_unaligned(begin_pointer as *const usize) }
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-    let selected_shape_before =
-        unsafe { ptr::read_unaligned((filter_address + 0x80) as *const usize) };
+    Some(RaycastFilterObservation {
+        filter_address,
+        filter_vtable,
+        exclude_filter_info_mask: unsafe {
+            ptr::read_unaligned((filter_address + 0x70) as *const u32)
+        },
+        required_filter_info_mask: unsafe {
+            ptr::read_unaligned((filter_address + 0x74) as *const u32)
+        },
+        candidate_node,
+        candidate_info: unsafe { ptr::read_unaligned((candidate_node + 0x18) as *const u32) },
+        candidate_owner: unsafe { ptr::read_unaligned((candidate_node + 0x28) as *const usize) },
+        ignored_owner: read_ignored_owner(filter_address, filter_vtable),
+        selected_shape: unsafe { ptr::read_unaligned((filter_address + 0x80) as *const usize) },
+    })
+}
 
-    let hit = candidate_sample.ray_filter_hits.iter().find(|hit| {
+fn read_ignored_owner(filter_address: usize, filter_vtable: usize) -> usize {
+    if filter_vtable != STEAM_IMAGE_BASE + C_IGNORE_FILTER_VFTABLE_RVA
+        || !readable_span(filter_address, 0xA8)
+    {
+        return 0;
+    }
+    let begin = unsafe {
+        ptr::read_unaligned(
+            (filter_address + C_IGNORE_FILTER_OWNER_VECTOR_BEGIN_OFFSET) as *const usize,
+        )
+    };
+    let end = unsafe {
+        ptr::read_unaligned(
+            (filter_address + C_IGNORE_FILTER_OWNER_VECTOR_END_OFFSET) as *const usize,
+        )
+    };
+    if begin >= end || end - begin > 0x1000 || !readable_span(begin, size_of::<usize>()) {
+        return 0;
+    }
+    unsafe { ptr::read_unaligned(begin as *const usize) }
+}
+
+fn reserve_filter_hit(sample: &WorldQueryCandidateSample) -> Option<&RaycastFilterHitSample> {
+    sample.ray_filter_hits.iter().find(|hit| {
         hit.state
             .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
-    })?;
-    hit.filter_context.store(filter_address, Ordering::Relaxed);
-    hit.filter_vtable.store(filter_vtable, Ordering::Relaxed);
-    hit.exclude_filter_info_mask
-        .store(exclude_filter_info_mask, Ordering::Relaxed);
-    hit.required_filter_info_mask
-        .store(required_filter_info_mask, Ordering::Relaxed);
-    hit.candidate_node.store(candidate_node, Ordering::Relaxed);
-    hit.candidate_filter_info
-        .store(candidate_info, Ordering::Relaxed);
-    hit.candidate_owner
-        .store(candidate_owner, Ordering::Relaxed);
-    hit.filter_ignored_owner
-        .store(filter_ignored_owner, Ordering::Relaxed);
-    hit.selected_shape_before
-        .store(selected_shape_before, Ordering::Relaxed);
-    Some(RaycastFilterHitCapture {
-        sample: hit,
-        filter_context: filter_address,
     })
+}
+
+fn publish_filter_observation(
+    hit: &RaycastFilterHitSample,
+    observation: &RaycastFilterObservation,
+) {
+    hit.filter_context
+        .store(observation.filter_address, Ordering::Relaxed);
+    hit.filter_vtable
+        .store(observation.filter_vtable, Ordering::Relaxed);
+    hit.exclude_filter_info_mask
+        .store(observation.exclude_filter_info_mask, Ordering::Relaxed);
+    hit.required_filter_info_mask
+        .store(observation.required_filter_info_mask, Ordering::Relaxed);
+    hit.candidate_node
+        .store(observation.candidate_node, Ordering::Relaxed);
+    hit.candidate_filter_info
+        .store(observation.candidate_info, Ordering::Relaxed);
+    hit.candidate_owner
+        .store(observation.candidate_owner, Ordering::Relaxed);
+    hit.filter_ignored_owner
+        .store(observation.ignored_owner, Ordering::Relaxed);
+    hit.selected_shape_before
+        .store(observation.selected_shape, Ordering::Relaxed);
 }
 
 pub(in crate::api::game::adapter) fn finish_raycast_filter_hit_capture(

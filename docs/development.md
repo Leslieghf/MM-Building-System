@@ -23,4 +23,4 @@ The library artifact is under `target/x86_64-pc-windows-msvc/release/`. Copying 
 
 ## Documentation map
 
-`README.md` is the entry point; `architecture.md` explains the implementation, `scripting.md` is the package onboarding guide, and `rhai-api.md` is generated from the runtime API catalog. Dated reverse-engineering notes remain in `docs/research/` as evidence and historical context; they are not current usage instructions. The documentation refresh plan and decisions are in `docs/maintainers/`.
+`README.md` is the entry point; `architecture.md` describes runtime ownership and boundaries, `scripting.md` is the package guide, and `rhai-api.md` is generated from the runtime API catalog. Dated reverse-engineering notes in `docs/research/` preserve evidence and are not current usage instructions.

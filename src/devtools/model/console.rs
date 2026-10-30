@@ -103,65 +103,93 @@ impl ScriptConsoleUiState {
             .len()
             .saturating_sub(new_events.min(usize::MAX as u64) as usize);
         for event in output.events().iter().skip(skip) {
-            if event.request_id.is_none()
-                && (event
-                    .text
-                    .starts_with("script discovery result queue overflow")
-                    || event.text.starts_with("console event queue overload:"))
-            {
-                self.discovery_pending = false;
-                self.discovery_status = if event.text.starts_with("console event queue overload:") {
-                    "Console output overloaded; the scan may be incomplete. Rescan when ready."
-                        .into()
-                } else {
-                    event.text.clone()
-                };
-                self.pending_discovery_request = None;
-            }
-            if event.request_id == self.pending_discovery_request
-                && event.request_id.is_some()
-                && event.severity == ConsoleSeverity::Error
-            {
-                self.discovery_pending = false;
-                self.discovery_status = event.text.clone();
-                self.pending_discovery_request = None;
-            }
-            let (Some(id), Some(generation), Some(status)) =
-                (&event.script, event.generation, event.status)
-            else {
-                continue;
-            };
-            let previous = self.loaded_scripts.iter().find(|row| row.id == *id);
-            let row = ScriptConsoleStatusRow {
-                id: id.clone(),
-                generation,
-                status,
-                auto_reload: event
-                    .auto_reload
-                    .unwrap_or_else(|| previous.is_some_and(|row| row.auto_reload)),
-                reload_error: if event.auto_reload.is_some() {
-                    event.reload_error.clone()
-                } else {
-                    previous.and_then(|row| row.reload_error.clone())
-                },
-            };
-            if self
-                .selected_script
-                .as_ref()
-                .is_some_and(|selected| selected.id == *id)
-            {
-                self.selected_script = Some(row.clone());
-            }
-            self.loaded_scripts.retain(|loaded| loaded.id != *id);
-            if status != crate::api::scripts::ScriptStatus::Unloaded {
-                if self.loaded_scripts.len() == MAX_CONSOLE_STATUS_ROWS {
-                    self.loaded_scripts.remove(0);
-                }
-                if self.selected_script.is_none() {
-                    self.selected_script = Some(row.clone());
-                }
-                self.loaded_scripts.push(row);
-            }
+            self.observe_event(event);
         }
+    }
+
+    fn observe_event(&mut self, event: &crate::api::scripts::console::ConsoleEvent) {
+        self.observe_discovery_event(event);
+        let (Some(id), Some(generation), Some(status)) =
+            (&event.script, event.generation, event.status)
+        else {
+            return;
+        };
+        let row = self.status_row(event, id, generation, status);
+        self.update_selected_status(id, &row);
+        self.loaded_scripts.retain(|loaded| loaded.id != *id);
+        if status != crate::api::scripts::ScriptStatus::Unloaded {
+            self.push_status_row(row);
+        }
+    }
+
+    fn observe_discovery_event(&mut self, event: &crate::api::scripts::console::ConsoleEvent) {
+        let overflow = event.request_id.is_none()
+            && (event
+                .text
+                .starts_with("script discovery result queue overflow")
+                || event.text.starts_with("console event queue overload:"));
+        let failed_scan = event.request_id == self.pending_discovery_request
+            && event.request_id.is_some()
+            && event.severity == ConsoleSeverity::Error;
+        if overflow {
+            self.discovery_status = if event.text.starts_with("console event queue overload:") {
+                "Console output overloaded; the scan may be incomplete. Rescan when ready.".into()
+            } else {
+                event.text.clone()
+            };
+        } else if failed_scan {
+            self.discovery_status = event.text.clone();
+        } else {
+            return;
+        }
+        self.discovery_pending = false;
+        self.pending_discovery_request = None;
+    }
+
+    fn status_row(
+        &self,
+        event: &crate::api::scripts::console::ConsoleEvent,
+        id: &crate::api::scripts::ScriptId,
+        generation: crate::api::scripts::ScriptGeneration,
+        status: crate::api::scripts::ScriptStatus,
+    ) -> ScriptConsoleStatusRow {
+        let previous = self.loaded_scripts.iter().find(|row| row.id == *id);
+        ScriptConsoleStatusRow {
+            id: id.clone(),
+            generation,
+            status,
+            auto_reload: event
+                .auto_reload
+                .unwrap_or_else(|| previous.is_some_and(|row| row.auto_reload)),
+            reload_error: if event.auto_reload.is_some() {
+                event.reload_error.clone()
+            } else {
+                previous.and_then(|row| row.reload_error.clone())
+            },
+        }
+    }
+
+    fn update_selected_status(
+        &mut self,
+        id: &crate::api::scripts::ScriptId,
+        row: &ScriptConsoleStatusRow,
+    ) {
+        if self
+            .selected_script
+            .as_ref()
+            .is_some_and(|selected| selected.id == *id)
+        {
+            self.selected_script = Some(row.clone());
+        }
+    }
+
+    fn push_status_row(&mut self, row: ScriptConsoleStatusRow) {
+        if self.loaded_scripts.len() == MAX_CONSOLE_STATUS_ROWS {
+            self.loaded_scripts.remove(0);
+        }
+        if self.selected_script.is_none() {
+            self.selected_script = Some(row.clone());
+        }
+        self.loaded_scripts.push(row);
     }
 }

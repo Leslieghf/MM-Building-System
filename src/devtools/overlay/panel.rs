@@ -121,99 +121,136 @@ pub(super) fn draw_console_tab(
     sender: &mut ConsoleRequestSender,
 ) {
     ui.child_window("console_tab").size([0.0, 0.0]).build(|| {
-        ui.checkbox("Follow output", &mut state.follow_output);
-        ui.same_line();
-        ui.checkbox("Wrap long lines", &mut state.wrap_console_lines);
-        ui.same_line();
-        ui.text_disabled(format!(
-            "{} / {} events",
-            output.events().len(),
-            crate::api::scripts::console::MAX_SCROLLBACK_ENTRIES
-        ));
-        let output_height =
-            (ui.content_region_avail()[1] - ui.frame_height_with_spacing() * 2.0).max(60.0);
-        ui.child_window("console_output")
-            .size([0.0, output_height])
-            .horizontal_scrollbar(!state.wrap_console_lines)
-            .border(true)
-            .build(|| {
-                let _wrap = state.wrap_console_lines.then(|| ui.push_text_wrap_pos());
-                if state.restore_scroll {
-                    ui.set_scroll_y(state.scroll_y);
-                    state.restore_scroll = false;
-                }
-                if ui.is_window_hovered()
-                    && (ui.io().mouse_wheel > 0.0 || ui.is_mouse_down(imgui::MouseButton::Left))
-                {
-                    state.follow_output = false;
-                }
-                draw_console_transcript(
-                    ui,
-                    output.events(),
-                    &mut state.selected_console_text,
-                    state.wrap_console_lines,
-                );
-                if ui.is_window_focused()
-                    && ui.io().key_ctrl
-                    && ui.is_key_pressed_no_repeat(imgui::Key::C)
-                    && let Some(selected) = state.selected_console_text.as_deref()
-                {
-                    ui.set_clipboard_text(selected);
-                }
-                if state.follow_output {
-                    ui.set_scroll_here_y_with_ratio(1.0);
-                }
-                state.scroll_y = ui.scroll_y();
-            });
-        if state.focus_prompt {
-            ui.set_keyboard_focus_here();
-            state.focus_prompt = false;
-        }
-        ui.set_next_item_width(-70.0);
-        let entered = ui
-            .input_text("##console_command", &mut state.input)
-            .hint("help | clear | script load <id>")
-            .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
-            .callback(
-                imgui::InputTextCallback::HISTORY | imgui::InputTextCallback::EDIT,
-                ConsoleInputCallbacks {
-                    history: &state.history,
-                    cursor: &mut state.history_cursor,
-                    draft: &mut state.history_draft,
-                    input_over_limit: &mut state.input_over_limit,
-                },
-            )
-            .build();
-        let mut end = state
-            .input
-            .len()
-            .min(crate::api::scripts::console::MAX_COMMAND_BYTES);
-        if state.input.len() > crate::api::scripts::console::MAX_COMMAND_BYTES {
-            state.input_over_limit = true;
-        }
-        while !state.input.is_char_boundary(end) {
-            end -= 1;
-        }
-        state.input.truncate(end);
-        ui.same_line();
-        if ui.button("Send") || entered {
-            if state.input_over_limit {
-                output.record(ConsoleEvent::new(
-                    None,
-                    ConsoleSeverity::Error,
-                    "console input exceeds 256 UTF-8 bytes",
-                ));
-            } else {
-                state.remember_input();
-                let input = state.input.clone();
-                submit_console_input(state, output, sender, &input);
-            }
-            state.input.clear();
-            state.input_over_limit = false;
-            state.focus_prompt = true;
-        }
-        ui.text_disabled("Click a transcript row, Ctrl+C copies it | prompt supports Ctrl+C/X/V | Up/Down: history");
+        draw_console_controls(ui, state, output);
+        draw_console_output(ui, state, output);
+        draw_console_prompt(ui, state, output, sender);
+        ui.text_disabled(
+            "Click a transcript row or press Ctrl+C to copy; Up/Down navigates history.",
+        );
     });
+}
+
+fn draw_console_controls(ui: &imgui::Ui, state: &mut ScriptConsoleUiState, output: &ConsoleOutput) {
+    ui.checkbox("Follow output", &mut state.follow_output);
+    ui.same_line();
+    ui.checkbox("Wrap long lines", &mut state.wrap_console_lines);
+    ui.same_line();
+    ui.text_disabled(format!(
+        "{} / {} events",
+        output.events().len(),
+        crate::api::scripts::console::MAX_SCROLLBACK_ENTRIES
+    ));
+}
+
+fn draw_console_output(ui: &imgui::Ui, state: &mut ScriptConsoleUiState, output: &ConsoleOutput) {
+    let height = (ui.content_region_avail()[1] - ui.frame_height_with_spacing() * 2.0).max(60.0);
+    ui.child_window("console_output")
+        .size([0.0, height])
+        .horizontal_scrollbar(!state.wrap_console_lines)
+        .border(true)
+        .build(|| draw_console_transcript_view(ui, state, output));
+}
+
+fn draw_console_transcript_view(
+    ui: &imgui::Ui,
+    state: &mut ScriptConsoleUiState,
+    output: &ConsoleOutput,
+) {
+    let _wrap = state.wrap_console_lines.then(|| ui.push_text_wrap_pos());
+    if state.restore_scroll {
+        ui.set_scroll_y(state.scroll_y);
+        state.restore_scroll = false;
+    }
+    if ui.is_window_hovered()
+        && (ui.io().mouse_wheel > 0.0 || ui.is_mouse_down(imgui::MouseButton::Left))
+    {
+        state.follow_output = false;
+    }
+    draw_console_transcript(
+        ui,
+        output.events(),
+        &mut state.selected_console_text,
+        state.wrap_console_lines,
+    );
+    if ui.is_window_focused()
+        && ui.io().key_ctrl
+        && ui.is_key_pressed_no_repeat(imgui::Key::C)
+        && let Some(selected) = state.selected_console_text.as_deref()
+    {
+        ui.set_clipboard_text(selected);
+    }
+    if state.follow_output {
+        ui.set_scroll_here_y_with_ratio(1.0);
+    }
+    state.scroll_y = ui.scroll_y();
+}
+
+fn draw_console_prompt(
+    ui: &imgui::Ui,
+    state: &mut ScriptConsoleUiState,
+    output: &mut ConsoleOutput,
+    sender: &mut ConsoleRequestSender,
+) {
+    if state.focus_prompt {
+        ui.set_keyboard_focus_here();
+        state.focus_prompt = false;
+    }
+    ui.set_next_item_width(-70.0);
+    let entered = draw_console_input(ui, state);
+    ui.same_line();
+    if ui.button("Send") || entered {
+        submit_prompt(state, output, sender);
+    }
+}
+
+fn draw_console_input(ui: &imgui::Ui, state: &mut ScriptConsoleUiState) -> bool {
+    let entered = ui
+        .input_text("##console_command", &mut state.input)
+        .hint("help | clear | script load <id>")
+        .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
+        .callback(
+            imgui::InputTextCallback::HISTORY | imgui::InputTextCallback::EDIT,
+            ConsoleInputCallbacks {
+                history: &state.history,
+                cursor: &mut state.history_cursor,
+                draft: &mut state.history_draft,
+                input_over_limit: &mut state.input_over_limit,
+            },
+        )
+        .build();
+    limit_console_input(state);
+    entered
+}
+
+fn limit_console_input(state: &mut ScriptConsoleUiState) {
+    let limit = crate::api::scripts::console::MAX_COMMAND_BYTES;
+    state.input_over_limit |= state.input.len() > limit;
+    let mut end = state.input.len().min(limit);
+    while !state.input.is_char_boundary(end) {
+        end -= 1;
+    }
+    state.input.truncate(end);
+}
+
+fn submit_prompt(
+    state: &mut ScriptConsoleUiState,
+    output: &mut ConsoleOutput,
+    sender: &mut ConsoleRequestSender,
+) {
+    if state.input_over_limit {
+        output.record(ConsoleEvent::new(
+            None,
+            ConsoleSeverity::Error,
+            "console input exceeds 256 UTF-8 bytes",
+        ));
+    } else {
+        state.remember_input();
+        let input = state.input.clone();
+        submit_console_input(state, output, sender, &input);
+    }
+    state.input.clear();
+    state.input_over_limit = false;
+    state.focus_prompt = true;
 }
 
 pub(super) fn request_discovery(
@@ -256,6 +293,17 @@ pub(super) fn draw_scripts_tab_contents(
     sender: &mut ConsoleRequestSender,
     discovery: &crate::api::scripts::loader::ScriptDiscoveryRequester,
 ) {
+    draw_package_controls(ui, state, discovery);
+    draw_package_list(ui, state);
+    draw_selected_package(ui, state, output, sender);
+    draw_loaded_runtime(ui, state, output, sender);
+}
+
+fn draw_package_controls(
+    ui: &imgui::Ui,
+    state: &mut ScriptConsoleUiState,
+    discovery: &crate::api::scripts::loader::ScriptDiscoveryRequester,
+) {
     if ui.button("Rescan") {
         request_discovery(state, discovery);
     }
@@ -263,6 +311,9 @@ pub(super) fn draw_scripts_tab_contents(
         ui.same_line();
         ui.text_disabled(&state.discovery_status);
     }
+}
+
+fn draw_package_list(ui: &imgui::Ui, state: &mut ScriptConsoleUiState) {
     let available_height = ui.content_region_avail()[1];
     ui.child_window("discovered_packages")
         .size([0.0, (available_height * 0.56).max(100.0)])
@@ -294,6 +345,14 @@ pub(super) fn draw_scripts_tab_contents(
                 }
             }
         });
+}
+
+fn draw_selected_package(
+    ui: &imgui::Ui,
+    state: &mut ScriptConsoleUiState,
+    output: &mut ConsoleOutput,
+    sender: &mut ConsoleRequestSender,
+) {
     if let Some(selected_name) = state.selected_package.clone()
         && let Some(row) = state
             .discovered_scripts
@@ -353,63 +412,93 @@ pub(super) fn draw_scripts_tab_contents(
             }
         }
     }
+}
+
+fn draw_loaded_runtime(
+    ui: &imgui::Ui,
+    state: &mut ScriptConsoleUiState,
+    output: &mut ConsoleOutput,
+    sender: &mut ConsoleRequestSender,
+) {
     if !state.loaded_scripts.is_empty() {
         section_header(ui, "Loaded runtime");
-        let mut clicked_script = None;
-        ui.child_window("loaded_runtime")
-            .size([0.0, ui.text_line_height_with_spacing() * 3.0])
-            .border(true)
-            .build(|| {
-                for item in &state.loaded_scripts {
-                    let selected = state
-                        .selected_script
-                        .as_ref()
-                        .is_some_and(|selected| selected.id == item.id);
-                    let _row_id = ui.push_id(item.id.as_str());
-                    let label = format!(
-                        "{} | {:?} | generation {}",
-                        item.id.as_str(),
-                        item.status,
-                        item.generation.0
-                    );
-                    if ui
-                        .selectable_config(&label)
-                        .size([ui.calc_text_size(&label)[0], 0.0])
-                        .selected(selected)
-                        .build()
-                    {
-                        clicked_script = Some(item.clone());
-                    }
-                    ui.same_line();
-                    let toggle = if item.auto_reload {
-                        "Auto Reload: On"
-                    } else {
-                        "Auto Reload: Off"
-                    };
-                    if ui.small_button(toggle) {
-                        issue_auto_reload(output, sender, item);
-                    }
-                    if let Some(error) = &item.reload_error {
-                        let _color =
-                            ui.push_style_color(imgui::StyleColor::Text, [1.0, 0.48, 0.45, 1.0]);
-                        ui.text_wrapped(error);
-                    }
-                }
-            });
+        let clicked_script = draw_loaded_rows(ui, state, output, sender);
         if let Some(clicked_script) = clicked_script {
             state.selected_script = Some(clicked_script);
         }
-        if let Some(selected) = state.selected_script.clone()
-            && state
-                .loaded_scripts
-                .iter()
-                .any(|item| item.id == selected.id)
-        {
-            ui.same_line();
-            if ui.button(format!("Unload {}", selected.id.as_str())) {
-                issue_lifecycle(state, output, sender, "unload", &selected.id);
+        draw_selected_unload(ui, state, output, sender);
+    }
+}
+
+fn draw_loaded_rows(
+    ui: &imgui::Ui,
+    state: &ScriptConsoleUiState,
+    output: &mut ConsoleOutput,
+    sender: &mut ConsoleRequestSender,
+) -> Option<crate::devtools::model::ScriptConsoleStatusRow> {
+    let mut clicked_script = None;
+    ui.child_window("loaded_runtime")
+        .size([0.0, ui.text_line_height_with_spacing() * 3.0])
+        .border(true)
+        .build(|| {
+            for item in &state.loaded_scripts {
+                let selected = state
+                    .selected_script
+                    .as_ref()
+                    .is_some_and(|selected| selected.id == item.id);
+                let _row_id = ui.push_id(item.id.as_str());
+                let label = format!(
+                    "{} | {:?} | generation {}",
+                    item.id.as_str(),
+                    item.status,
+                    item.generation.0
+                );
+                if ui
+                    .selectable_config(&label)
+                    .size([ui.calc_text_size(&label)[0], 0.0])
+                    .selected(selected)
+                    .build()
+                {
+                    clicked_script = Some(item.clone());
+                }
+                ui.same_line();
+                let toggle = if item.auto_reload {
+                    "Auto Reload: On"
+                } else {
+                    "Auto Reload: Off"
+                };
+                if ui.small_button(toggle) {
+                    issue_auto_reload(output, sender, item);
+                }
+                if let Some(error) = &item.reload_error {
+                    let _color =
+                        ui.push_style_color(imgui::StyleColor::Text, [1.0, 0.48, 0.45, 1.0]);
+                    ui.text_wrapped(error);
+                }
             }
-        }
+        });
+    clicked_script
+}
+
+fn draw_selected_unload(
+    ui: &imgui::Ui,
+    state: &mut ScriptConsoleUiState,
+    output: &mut ConsoleOutput,
+    sender: &mut ConsoleRequestSender,
+) {
+    let Some(selected) = state.selected_script.clone() else {
+        return;
+    };
+    if !state
+        .loaded_scripts
+        .iter()
+        .any(|item| item.id == selected.id)
+    {
+        return;
+    }
+    ui.same_line();
+    if ui.button(format!("Unload {}", selected.id.as_str())) {
+        issue_lifecycle(state, output, sender, "unload", &selected.id);
     }
 }
 
@@ -454,81 +543,112 @@ pub(super) fn submit_console_input(
         output.clear();
         return true;
     }
-    if let Ok(command) = ConsoleCommand::parse(input) {
-        match command {
-            ConsoleCommand::ShowKeys => {
-                record_local_command(output, input);
-                let names = imgui::Key::VARIANTS
-                    .into_iter()
-                    .filter_map(crate::devtools::input::from_imgui)
-                    .map(|key| key.name())
-                    .collect::<Vec<_>>()
-                    .join("  ");
-                output.record(ConsoleEvent::new(None, ConsoleSeverity::Info, &names));
-                return true;
-            }
-            ConsoleCommand::ShowBinds => {
-                record_local_command(output, input);
-                if sender.bindings().is_empty() {
-                    output.record(ConsoleEvent::new(
-                        None,
-                        ConsoleSeverity::Info,
-                        "no key bindings",
-                    ));
-                } else {
-                    for (key, command) in sender.bindings() {
-                        let key_name = crate::api::ecs::input_key::InputKey::from_id(*key)
-                            .map(|key| key.name())
-                            .unwrap_or("unknown");
-                        output.record(ConsoleEvent::new(
-                            None,
-                            ConsoleSeverity::Info,
-                            &format!("{key_name} -> {command}"),
-                        ));
-                    }
-                }
-                return true;
-            }
-            ConsoleCommand::Bind { key, command } => {
-                record_local_command(output, input);
-                sender.bind(key, command.clone());
-                output.record(ConsoleEvent::new(
-                    None,
-                    ConsoleSeverity::Info,
-                    &format!("bound {} to {command}", input_key_name(key)),
-                ));
-                return true;
-            }
-            ConsoleCommand::Unbind { key } => {
-                record_local_command(output, input);
-                let removed = sender.unbind(key);
-                let message = if removed {
-                    format!("unbound {}", input_key_name(key))
-                } else {
-                    "key was not bound".to_owned()
-                };
-                output.record(ConsoleEvent::new(
-                    None,
-                    if removed {
-                        ConsoleSeverity::Info
-                    } else {
-                        ConsoleSeverity::Warning
-                    },
-                    &message,
-                ));
-                return true;
-            }
-            _ => {}
+    let is_script_list = if let Ok(command) = ConsoleCommand::parse(input) {
+        if handle_local_console_command(sender, output, input, command.clone()) {
+            return true;
         }
-    }
+        command == ConsoleCommand::ScriptList
+    } else {
+        false
+    };
     let Some(request_id) = output.submit_input(sender, input) else {
         return false;
     };
-    if ConsoleCommand::parse(input) == Ok(ConsoleCommand::ScriptList) {
+    if is_script_list {
         state.discovery_pending = true;
         state.discovery_status = "Scanning package manifests…".into();
         state.pending_discovery_request = Some(request_id);
     }
+    true
+}
+
+fn handle_local_console_command(
+    sender: &mut ConsoleRequestSender,
+    output: &mut ConsoleOutput,
+    input: &str,
+    command: ConsoleCommand,
+) -> bool {
+    match command {
+        ConsoleCommand::ShowKeys => show_input_keys(output, input),
+        ConsoleCommand::ShowBinds => show_input_binds(sender, output, input),
+        ConsoleCommand::Bind { key, command } => {
+            bind_input_key(sender, output, input, key, command)
+        }
+        ConsoleCommand::Unbind { key } => unbind_input_key(sender, output, input, key),
+        _ => false,
+    }
+}
+
+fn show_input_keys(output: &mut ConsoleOutput, input: &str) -> bool {
+    record_local_command(output, input);
+    let names = imgui::Key::VARIANTS
+        .into_iter()
+        .filter_map(crate::devtools::input::from_imgui)
+        .map(|key| key.name())
+        .collect::<Vec<_>>()
+        .join("  ");
+    output.record(ConsoleEvent::new(None, ConsoleSeverity::Info, &names));
+    true
+}
+
+fn show_input_binds(
+    sender: &ConsoleRequestSender,
+    output: &mut ConsoleOutput,
+    input: &str,
+) -> bool {
+    record_local_command(output, input);
+    if sender.bindings().is_empty() {
+        output.record(ConsoleEvent::new(
+            None,
+            ConsoleSeverity::Info,
+            "no key bindings",
+        ));
+        return true;
+    }
+    for (key, command) in sender.bindings() {
+        output.record(ConsoleEvent::new(
+            None,
+            ConsoleSeverity::Info,
+            &format!("{} -> {command}", input_key_name(*key)),
+        ));
+    }
+    true
+}
+
+fn bind_input_key(
+    sender: &mut ConsoleRequestSender,
+    output: &mut ConsoleOutput,
+    input: &str,
+    key: u32,
+    command: String,
+) -> bool {
+    record_local_command(output, input);
+    sender.bind(key, command.clone());
+    output.record(ConsoleEvent::new(
+        None,
+        ConsoleSeverity::Info,
+        &format!("bound {} to {command}", input_key_name(key)),
+    ));
+    true
+}
+
+fn unbind_input_key(
+    sender: &mut ConsoleRequestSender,
+    output: &mut ConsoleOutput,
+    input: &str,
+    key: u32,
+) -> bool {
+    record_local_command(output, input);
+    let removed = sender.unbind(key);
+    let (severity, message) = if removed {
+        (
+            ConsoleSeverity::Info,
+            format!("unbound {}", input_key_name(key)),
+        )
+    } else {
+        (ConsoleSeverity::Warning, "key was not bound".to_owned())
+    };
+    output.record(ConsoleEvent::new(None, severity, &message));
     true
 }
 
@@ -697,83 +817,141 @@ pub(super) fn draw_console_transcript(
     selected_text: &mut Option<String>,
     wrap_lines: bool,
 ) {
-    let mut rendered_requests = std::collections::HashSet::new();
-    let mut stripe = false;
-    let mut last_script_source = None;
+    let mut view = TranscriptView::default();
     let mut index = 0;
     while index < events.len() {
         let event = &events[index];
         if let Some(command) = event.text.strip_prefix("> ") {
-            last_script_source = None;
-            let request_id = event.request_id;
-            draw_console_category_header(
+            index = draw_command_group(
                 ui,
-                &format!("CMD: {command}"),
-                &mut stripe,
-                selected_text,
-            );
-
-            ui.indent();
-            if let Some(request_id) = request_id {
-                rendered_requests.insert(request_id);
-                for response in events.iter().filter(|response| {
-                    response.request_id == Some(request_id) && !response.text.starts_with("> ")
-                }) {
-                    if !draw_script_event(
-                        ui,
-                        response,
-                        &mut last_script_source,
-                        &mut stripe,
-                        selected_text,
-                        wrap_lines,
-                    ) {
-                        draw_console_event(ui, response, selected_text, wrap_lines);
-                    }
-                }
-            } else {
-                let mut response_index = index + 1;
-                while response_index < events.len() {
-                    let response = &events[response_index];
-                    if response.text.starts_with("> ") || response.request_id.is_some() {
-                        break;
-                    }
-                    if !draw_script_event(
-                        ui,
-                        response,
-                        &mut last_script_source,
-                        &mut stripe,
-                        selected_text,
-                        wrap_lines,
-                    ) {
-                        draw_console_event(ui, response, selected_text, wrap_lines);
-                    }
-                    response_index += 1;
-                }
-                index = response_index.saturating_sub(1);
-            }
-            ui.unindent();
-            ui.spacing();
-        } else if event
-            .request_id
-            .is_some_and(|request_id| rendered_requests.contains(&request_id))
-        {
-            // Async results are rendered under their command, even if other output
-            // arrived between the prompt and the result.
-        } else {
-            if !draw_script_event(
-                ui,
-                event,
-                &mut last_script_source,
-                &mut stripe,
+                events,
+                index,
+                command,
                 selected_text,
                 wrap_lines,
-            ) {
-                ui.indent();
-                draw_console_event(ui, event, selected_text, wrap_lines);
-                ui.unindent();
-            }
+                &mut view,
+            );
+        } else {
+            draw_unattached_event(ui, event, selected_text, wrap_lines, &mut view);
         }
         index += 1;
+    }
+}
+
+#[derive(Default)]
+struct TranscriptView {
+    rendered_requests: std::collections::HashSet<u64>,
+    stripe: bool,
+    last_script_source: Option<crate::api::scripts::ScriptId>,
+}
+
+fn draw_command_group(
+    ui: &imgui::Ui,
+    events: &VecDeque<crate::api::scripts::console::ConsoleEvent>,
+    index: usize,
+    command: &str,
+    selected_text: &mut Option<String>,
+    wrap_lines: bool,
+    view: &mut TranscriptView,
+) -> usize {
+    view.last_script_source = None;
+    draw_console_category_header(
+        ui,
+        &format!("CMD: {command}"),
+        &mut view.stripe,
+        selected_text,
+    );
+    ui.indent();
+    let next_index = if let Some(request_id) = events[index].request_id {
+        view.rendered_requests.insert(request_id);
+        draw_request_responses(ui, events, request_id, selected_text, wrap_lines, view);
+        index
+    } else {
+        draw_adjacent_responses(ui, events, index, selected_text, wrap_lines, view)
+    };
+    ui.unindent();
+    ui.spacing();
+    next_index
+}
+
+fn draw_request_responses(
+    ui: &imgui::Ui,
+    events: &VecDeque<crate::api::scripts::console::ConsoleEvent>,
+    request_id: u64,
+    selected_text: &mut Option<String>,
+    wrap_lines: bool,
+    view: &mut TranscriptView,
+) {
+    for response in events.iter().filter(|response| {
+        response.request_id == Some(request_id) && !response.text.starts_with("> ")
+    }) {
+        draw_response(ui, response, selected_text, wrap_lines, view);
+    }
+}
+
+fn draw_adjacent_responses(
+    ui: &imgui::Ui,
+    events: &VecDeque<crate::api::scripts::console::ConsoleEvent>,
+    index: usize,
+    selected_text: &mut Option<String>,
+    wrap_lines: bool,
+    view: &mut TranscriptView,
+) -> usize {
+    let mut response_index = index + 1;
+    while response_index < events.len() {
+        let response = &events[response_index];
+        if response.text.starts_with("> ") || response.request_id.is_some() {
+            break;
+        }
+        draw_response(ui, response, selected_text, wrap_lines, view);
+        response_index += 1;
+    }
+    response_index.saturating_sub(1)
+}
+
+fn draw_response(
+    ui: &imgui::Ui,
+    event: &crate::api::scripts::console::ConsoleEvent,
+    selected_text: &mut Option<String>,
+    wrap_lines: bool,
+    view: &mut TranscriptView,
+) {
+    if !draw_script_event(
+        ui,
+        event,
+        &mut view.last_script_source,
+        &mut view.stripe,
+        selected_text,
+        wrap_lines,
+    ) {
+        draw_console_event(ui, event, selected_text, wrap_lines);
+    }
+}
+
+fn draw_unattached_event(
+    ui: &imgui::Ui,
+    event: &crate::api::scripts::console::ConsoleEvent,
+    selected_text: &mut Option<String>,
+    wrap_lines: bool,
+    view: &mut TranscriptView,
+) {
+    if event
+        .request_id
+        .is_some_and(|id| view.rendered_requests.contains(&id))
+    {
+        return;
+    }
+    if !draw_script_event(
+        ui,
+        event,
+        &mut view.last_script_source,
+        &mut view.stripe,
+        selected_text,
+        wrap_lines,
+    ) {
+        ui.indent();
+        draw_console_event(ui, event, selected_text, wrap_lines);
+        ui.unindent();
     }
 }
 

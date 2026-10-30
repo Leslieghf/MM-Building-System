@@ -2,12 +2,14 @@
 //! Hook callbacks capture observations; runtime systems consume owned snapshots.
 mod callback;
 mod config;
+mod effects;
 mod hooks;
 mod memory;
 mod sampling;
 
 use callback::*;
 use config::*;
+use effects::*;
 use hooks::*;
 use memory::*;
 use sampling::*;
@@ -919,73 +921,93 @@ extern "C" fn record_world_query_result(
     }
 
     sample.result.store(result & 0xFF, Ordering::Relaxed);
-    let output_record_address = sample.output_record_address.load(Ordering::Relaxed);
-    if readable_span(output_record_address, size_of::<[u64; 10]>()) {
-        let words = unsafe { ptr::read_unaligned(output_record_address as *const [u64; 10]) };
-        if return_address.checked_sub(STEAM_IMAGE_BASE) == Some(AMMO_WORLD_QUERY_CALLER_RVA) {
-            let dispatch_pointer_byte_address = (words[5] as usize).checked_add(0x10);
-            if let Some(address) =
-                dispatch_pointer_byte_address.filter(|address| readable_span(*address, 1))
-            {
-                let value = unsafe { ptr::read_unaligned(address as *const u8) };
-                sample
-                    .ammo_dispatch_pointer_byte_10
-                    .store(value, Ordering::Relaxed);
-                sample
-                    .ammo_dispatch_pointer_byte_10_valid
-                    .store(true, Ordering::Relaxed);
-            }
-        }
-        for (destination, value) in sample.output_record_after.iter().zip(words) {
-            destination.store(value, Ordering::Relaxed);
-        }
-        sample
-            .output_record_after_valid
-            .store(true, Ordering::Relaxed);
-    }
-    let query_context_address = sample.query_context_address.load(Ordering::Relaxed);
-    if readable_span(query_context_address, size_of::<[u64; 21]>()) {
-        let words = unsafe { ptr::read_unaligned(query_context_address as *const [u64; 21]) };
-        for (destination, value) in sample.query_context_after.iter().zip(words) {
-            destination.store(value, Ordering::Relaxed);
-        }
-        sample
-            .query_context_after_valid
-            .store(true, Ordering::Relaxed);
-    }
-    if readable_span(query_data_address, size_of::<[u64; 12]>()) {
-        let data = unsafe { ptr::read_unaligned(query_data_address as *const [u64; 12]) };
-        for (destination, value) in sample.query_data_after.iter().zip(data) {
-            destination.store(value, Ordering::Relaxed);
-        }
-        sample.query_data_after_valid.store(true, Ordering::Relaxed);
-
-        // The helper's caller-owned ray block can contain pointers to
-        // additional result records. Capture readable candidates while the
-        // caller's stack frame is still live. Duplicate pointers are recorded
-        // once, and capture remains bounded to two records per sample.
-        let mut captured = 0usize;
-        let mut captured_addresses = [0usize; 2];
-        for pointer_slot in [3usize, 4, 5] {
-            let address = sample.query_data[pointer_slot].load(Ordering::Relaxed) as usize;
-            if address < 0x10000
-                || captured_addresses[..captured].contains(&address)
-                || captured >= sample.indirect_addresses.len()
-                || !readable_span(address, size_of::<[u64; 12]>())
-            {
-                continue;
-            }
-            let indirect = unsafe { ptr::read_unaligned(address as *const [u64; 12]) };
-            sample.indirect_addresses[captured].store(address, Ordering::Relaxed);
-            for (destination, value) in sample.indirect_data[captured].iter().zip(indirect) {
-                destination.store(value, Ordering::Relaxed);
-            }
-            sample.indirect_valid[captured].store(true, Ordering::Relaxed);
-            captured_addresses[captured] = address;
-            captured += 1;
-        }
-    }
+    capture_output_record(sample, return_address);
+    capture_query_context(sample);
+    capture_query_data(sample, query_data_address);
     sample.result_ready.store(true, Ordering::Release);
+}
+
+fn capture_output_record(sample: &WorldQuerySample, return_address: usize) {
+    let address = sample.output_record_address.load(Ordering::Relaxed);
+    if !readable_span(address, size_of::<[u64; 10]>()) {
+        return;
+    }
+    let words = unsafe { ptr::read_unaligned(address as *const [u64; 10]) };
+    if return_address.checked_sub(STEAM_IMAGE_BASE) == Some(AMMO_WORLD_QUERY_CALLER_RVA) {
+        capture_ammo_dispatch_byte(sample, words[5]);
+    }
+    for (destination, value) in sample.output_record_after.iter().zip(words) {
+        destination.store(value, Ordering::Relaxed);
+    }
+    sample
+        .output_record_after_valid
+        .store(true, Ordering::Relaxed);
+}
+
+fn capture_ammo_dispatch_byte(sample: &WorldQuerySample, dispatch_pointer: u64) {
+    let Some(address) = (dispatch_pointer as usize)
+        .checked_add(0x10)
+        .filter(|address| readable_span(*address, 1))
+    else {
+        return;
+    };
+    let value = unsafe { ptr::read_unaligned(address as *const u8) };
+    sample
+        .ammo_dispatch_pointer_byte_10
+        .store(value, Ordering::Relaxed);
+    sample
+        .ammo_dispatch_pointer_byte_10_valid
+        .store(true, Ordering::Relaxed);
+}
+
+fn capture_query_context(sample: &WorldQuerySample) {
+    let address = sample.query_context_address.load(Ordering::Relaxed);
+    if !readable_span(address, size_of::<[u64; 21]>()) {
+        return;
+    }
+    let words = unsafe { ptr::read_unaligned(address as *const [u64; 21]) };
+    for (destination, value) in sample.query_context_after.iter().zip(words) {
+        destination.store(value, Ordering::Relaxed);
+    }
+    sample
+        .query_context_after_valid
+        .store(true, Ordering::Relaxed);
+}
+
+fn capture_query_data(sample: &WorldQuerySample, address: usize) {
+    if !readable_span(address, size_of::<[u64; 12]>()) {
+        return;
+    }
+    let data = unsafe { ptr::read_unaligned(address as *const [u64; 12]) };
+    for (destination, value) in sample.query_data_after.iter().zip(data) {
+        destination.store(value, Ordering::Relaxed);
+    }
+    sample.query_data_after_valid.store(true, Ordering::Relaxed);
+    capture_indirect_query_data(sample);
+}
+
+fn capture_indirect_query_data(sample: &WorldQuerySample) {
+    // Capture bounded indirect records while the caller's stack frame is live.
+    let mut captured = 0usize;
+    let mut captured_addresses = [0usize; 2];
+    for slot in [3usize, 4, 5] {
+        let address = sample.query_data[slot].load(Ordering::Relaxed) as usize;
+        if address < 0x10000
+            || captured_addresses[..captured].contains(&address)
+            || captured >= sample.indirect_addresses.len()
+            || !readable_span(address, size_of::<[u64; 12]>())
+        {
+            continue;
+        }
+        let words = unsafe { ptr::read_unaligned(address as *const [u64; 12]) };
+        sample.indirect_addresses[captured].store(address, Ordering::Relaxed);
+        for (destination, value) in sample.indirect_data[captured].iter().zip(words) {
+            destination.store(value, Ordering::Relaxed);
+        }
+        sample.indirect_valid[captured].store(true, Ordering::Relaxed);
+        captured_addresses[captured] = address;
+        captured += 1;
+    }
 }
 
 #[inline(never)]

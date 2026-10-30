@@ -2,7 +2,7 @@
 
 This repository builds a Windows x64 ASI modloader foundation for Mad Max. It supplies a DX11 developer overlay, a constrained Rhai scripting API, and Rust-side integration points for building code-library mods. It is not a content mod: the examples demonstrate API use and do not add permanent world content.
 
-## Try the script examples
+## Run an example
 
 1. Build the ASI as described in [Development](docs/development.md), then load it with a compatible ASI loader for the supported game executable.
 2. Beside `MadMax.exe`, create `MadMaxModding/scripts/`.
@@ -11,7 +11,7 @@ This repository builds a Windows x64 ASI modloader foundation for Mad Max. It su
 
 Package layout, capabilities, callback behavior, and limits are in [Using Rhai scripts](docs/scripting.md). The generated, complete method reference is [Rhai API v1](docs/rhai-api.md).
 
-## What the library provides
+## Modding surface
 
 - A build-checked adapter for one known Mad Max executable build.
 - Owned game snapshots and bounded, typed effects for Rust systems and Rhai callbacks.
@@ -21,7 +21,7 @@ Package layout, capabilities, callback behavior, and limits are in [Using Rhai s
 
 The current Rust system-registration seam is in-process only; it is not a stable ABI for separately compiled Rust mods. Rhai packages are the supported user-authored extension format. This project does not expose arbitrary native calls, filesystem, process, or network access to scripts.
 
-## Project guide
+## Guides
 
 - [Architecture](docs/architecture.md): runtime flow and module responsibilities.
 - [Using Rhai scripts](docs/scripting.md): install location, package format, callbacks, and common commands.

@@ -14,7 +14,7 @@ MadMaxModding/scripts/vehicle_watch/
 
 Open Dev Tools with **F3**, choose **Scripts → Rescan** if the package was added after startup, then select it and choose **Load**.
 
-## Package contract
+## Package manifest
 
 ```toml
 id = "vehicle_watch"
@@ -28,6 +28,10 @@ on_run = "on_run"
 
 The package directory, requested ID, and manifest ID must match. IDs contain lowercase ASCII letters, digits, `_`, or `-`. Callback functions accept one context argument. Top-level statements do not run. `state` persists for one loaded generation and resets after a successful reload.
 
+## Callback behavior
+
+`game.post_sim` runs after the game simulation callback. `on_run` is invoked by `script run <id>` through the same callback context. Both receive one `MadMaxPostSimContext`; return values are ignored. A callback error disables that script generation. A failed reload leaves the current generation active.
+
 ## Console commands
 
 ```text
@@ -39,16 +43,16 @@ script reload vehicle_watch
 script unload vehicle_watch
 ```
 
-`script list` discovers manifests without compiling or executing scripts. Load and reload compile explicitly. A failed reload leaves the active generation running; a callback error disables that generation.
+`script list` discovers manifests without compiling or executing scripts. Load and reload compile explicitly.
 
 ## Capabilities
 
 API v1 capabilities are `game.read`, `log`, `input.read`, `game.vehicle.write`, and `debug.draw`. Frame metadata and pure `ctx.math` helpers need no capability.
 
-## Errors
+## Errors and recovery
 
-Undeclared capability access and invalid API arguments raise script errors. Invalid manifests are shown as invalid packages. A callback error disables its active generation; a failed reload leaves the current generation running.
+Undeclared capability access and invalid API arguments raise script errors. Invalid manifests remain visible as invalid packages. Fix the manifest or callback and reload; a failed reload keeps the last active generation running.
 
 ## Safety and limits
 
-Scripts receive copied snapshots. They cannot access arbitrary FFI, files, processes, networks, or modules. Vehicle writes and debug drawing are validated, bounded requests handled by the game callback. Native vehicle-write and renderer behavior remains experimental pending in-game verification. Exact signatures, values, coordinate conventions, and limits are in the generated [Rhai API v1 reference](rhai-api.md).
+Scripts receive copied snapshots. They cannot access arbitrary FFI, files, processes, networks, or modules. Vehicle writes and debug drawing are validated, bounded requests handled by the game callback. Native vehicle-write and renderer behavior remains experimental pending in-game verification. See [Rhai API v1](rhai-api.md) for signatures, values, coordinate conventions, errors, and limits.
