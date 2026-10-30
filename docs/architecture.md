@@ -26,6 +26,40 @@ The adapter copies data out of the game before it crosses callbacks or enters EC
 | `kernel` | `InitializeASI`, startup, endpoint composition, and operational file logging. |
 | `devtools` | DX11/ImGui overlay, script and console presentation, clipboard integration, and UI-specific state. |
 
+The paths below follow ownership of the work, including within those domains:
+
+```text
+api/
+  game/
+    abi/                    version-specific declarations and layouts
+    adapter/
+      hooks/                hook installation and callback entry
+      sampling/             native reads copied into owned telemetry
+  ecs/
+    channels.rs             bounded cross-callback transport
+    frame.rs                owned game snapshot
+    intents.rs              typed mod requests and outcomes
+    world/                  game-side Bevy runtime orchestration
+      commands.rs           request import and dispatch
+      effects.rs            queued effects emitted from ECS
+  rhai/                     script-facing API, context, and conversions
+    catalog.rs              versioned API descriptions
+    math.rs                 pure script math helpers
+  scripts/                  packages, compilation, lifecycle, console protocol
+    console.rs              bounded command/event transport and output history
+devtools/
+  input.rs                  ImGui key translation into stable input keys
+  model/
+    console.rs              prompt history, discovery, and script rows
+    overlay.rs              input ownership and appearance preferences
+    presentation.rs         UI snapshot and display-row resources
+  overlay/                  DX11 hook and ImGui panels
+  presentation.rs           UI-side Bevy schedule and intent flush
+kernel/                     loader entry and startup composition
+```
+
+UI state belongs to the developer tools even when it reflects script state; the script API and console transport remain in `api::scripts`. Native declarations remain under the game ABI, while only copied, validated behavior lives in the adapter. This keeps version-specific memory details out of mod-facing contracts and the UI.
+
 `src/lib.rs` exposes only `api`, `kernel`, and `devtools` as top-level domains, plus the loader entrypoint and selected spawn contracts. The `runtime`, `native`, `ui`, `sdk`, and `scripting` top-level layouts have been removed.
 
 ## Callback and ownership model
