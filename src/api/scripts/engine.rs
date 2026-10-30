@@ -1,3 +1,4 @@
+//! Rhai engine limits, sandbox configuration, and package compilation interface.
 use rhai::Engine;
 pub const MAX_OPERATIONS: u64 = 20_000;
 pub const MAX_CALL_LEVELS: usize = 16;

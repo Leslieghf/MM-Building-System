@@ -1,3 +1,5 @@
+//! Value layouts and scalar aliases shared by the supported game ABI.
+
 /// A four-byte SDK hash value.
 ///
 /// This is an owned scalar, not the SDK's C++ `CHashString` wrapper. Converting

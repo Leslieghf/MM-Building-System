@@ -1,3 +1,4 @@
+//! Pure, finite-checked vector math exposed to Rhai scripts.
 use rhai::{Dynamic, Engine, FLOAT, Map};
 
 const COMPONENT_LIMIT: FLOAT = 100_000.0;

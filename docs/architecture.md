@@ -47,15 +47,24 @@ api/
     math.rs                 pure script math helpers
     bindings/debug_draw.rs  bounded invocation-local debug geometry
   scripts/                  packages, compilation, lifecycle, console protocol
-    console.rs              bounded command/event transport and output history
+    loader/discovery.rs     bounded package scan and manifest validation
+    manager/invocation.rs   one callback execution and state validation
+    console/
+      command.rs            text grammar and request IDs
+      event.rs              owned event schema
+      transport.rs          bounded request/event channels
+      output.rs             retained UI scrollback
 devtools/
   input.rs                  ImGui key translation into stable input keys
   model/
     console.rs              prompt history, discovery, and script rows
     overlay.rs              input ownership and appearance preferences
     presentation.rs         UI snapshot and display-row resources
-  overlay/                  DX11 hook and ImGui panels
-  presentation.rs           UI-side Bevy schedule and intent flush
+  overlay/                  DX11 hook and ImGui panel composition
+    panel.rs                console and script panel interactions
+    panel/console_text.rs   ANSI-aware display and copy-text conversion
+  presentation.rs           UI-side Bevy schedule and readout projection
+  presentation/intent_transport.rs bounded UI-to-game request bridge
 kernel/                     loader entry and startup composition
 ```
 

@@ -1,3 +1,4 @@
+//! Script package manifest, validation rules, and prepared runtime payload.
 use super::{
     engine::{MAX_SOURCE_BYTES, RhaiEngineFactory},
     *,

@@ -1,3 +1,4 @@
+//! Content fingerprints and debounce policy for opt-in script file watching.
 use super::ScriptId;
 use std::collections::BTreeMap;
 
