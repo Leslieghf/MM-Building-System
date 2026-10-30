@@ -1,3 +1,4 @@
+//! Registration of script and mod systems into the game and UI schedules.
 use crate::runtime::{
     MadMaxPostSim, MadMaxPostSimSet, MadMaxRender, MadMaxRenderSet, RuntimeDiagnostics,
 };

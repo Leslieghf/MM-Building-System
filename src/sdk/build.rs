@@ -103,6 +103,9 @@ const fn steam_address(address: AddressPair) -> usize {
 /// Named Steam 1.0.3.0 SDK addresses already consumed by the native adapter.
 /// They remain candidate addresses and must not be used on another build.
 pub mod steam {
+    /// Preferred image base used by the inspected Steam executable build.
+    pub const IMAGE_BASE: usize = 0x14000_0000;
+
     use super::{
         CAMERA_MANAGER_SINGLETON_PAIR, CHARACTER_MANAGER_SINGLETON_PAIR,
         DEVICE_MANAGER_SINGLETON_PAIR, GET_CAMERA_MATRIX_PAIR, GET_CHARACTER_VEHICLE_PAIR,

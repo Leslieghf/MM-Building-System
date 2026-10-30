@@ -428,7 +428,7 @@ struct ScriptFormatter;
 impl ScriptFormatter {
     fn fixed(&mut self, value: Dynamic) -> Result<String, Box<rhai::EvalAltResult>> {
         let value = numeric_value(value, "fixed formatter requires a number")?;
-        Ok(crate::display::fixed(value))
+        Ok(crate::ui::format::fixed(value))
     }
 
     fn vector(&mut self, value: Dynamic) -> Result<String, Box<rhai::EvalAltResult>> {
@@ -448,7 +448,7 @@ impl ScriptFormatter {
             })?;
             components[index] = numeric_value(value, "vector components must be numbers")?;
         }
-        Ok(crate::display::vector_components(components))
+        Ok(crate::ui::format::vector_components(components))
     }
 }
 

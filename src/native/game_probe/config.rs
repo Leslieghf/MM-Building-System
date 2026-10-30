@@ -1,10 +1,11 @@
+//! Supported executable addresses and sampling limits for this game build.
 //! Supported executable fingerprint, native addresses, and sampling budgets.
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 pub(super) const STEAM_TIMESTAMP: u32 = 0x5628_A448;
 pub(super) const STEAM_FILE_SIZE: u64 = 76_814_792;
-pub(super) const STEAM_IMAGE_BASE: usize = 0x14000_0000;
+pub(super) use crate::sdk::build::steam::IMAGE_BASE as STEAM_IMAGE_BASE;
 pub(super) const UPDATE_POST_SIM_RVA: usize = 0x01FA_5A10;
 // CDebugRenderer facade, its line and auto-width arrow slots, verified in the
 // Ghidra project from the captured Steam executable overlays.
