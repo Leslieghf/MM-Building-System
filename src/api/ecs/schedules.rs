@@ -1,5 +1,11 @@
 //! Game-side Bevy schedule setup and projection of snapshots into mod-facing entities.
-use super::*;
+use super::{
+    CurrentGameFrame, CurrentPlayerVehicleProxy, GameSnapshot, MadMaxPostSim, MadMaxPostSimSet,
+    PlayerCharacterProxy, PlayerFrameData, RuntimeDiagnostics, VehicleFrameData,
+};
+use bevy_app::App;
+use bevy_ecs::prelude::*;
+use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule, SingleThreadedExecutor};
 
 pub fn create_game_app() -> App {
     let mut app = App::empty();
@@ -18,8 +24,8 @@ pub fn create_game_app() -> App {
     app.init_resource::<CurrentGameFrame>();
     app.init_resource::<crate::api::ecs::input::InputFrame>();
     app.init_resource::<crate::devtools::model::PendingUiInput>();
-    app.init_resource::<crate::scripting::manager::ScriptManager>();
-    app.init_resource::<crate::scripting::dispatch::PendingScriptDebugDraws>();
+    app.init_resource::<crate::api::scripts::manager::ScriptManager>();
+    app.init_resource::<crate::api::ecs::script_dispatch::PendingScriptDebugDraws>();
     app.init_resource::<RuntimeDiagnostics>();
     app.add_systems(
         MadMaxPostSim,

@@ -1,5 +1,6 @@
 //! Runtime health and callback diagnostics shared as owned ECS data.
-use super::*;
+use super::{IntentOutcome, SpawnOutcome};
+use bevy_ecs::prelude::Resource;
 
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub struct RuntimeDiagnostics {

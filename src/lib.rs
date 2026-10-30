@@ -1,14 +1,11 @@
-//! Mad Max mod runtime, split by native integration, user interface, and game runtime.
+//! In-process Mad Max modloader and code-library foundation.
 
 pub mod api;
 mod devtools;
 mod kernel;
-mod runtime;
-pub mod scripting;
-pub use api::game::abi as sdk;
 
-pub use devtools::overlay::InitializeASI;
-pub use runtime::{
+pub use api::ecs::{
     SpawnAssetKey, SpawnLifecycle, SpawnRequestError, SpawnRequestId, SpawnTransform,
     spawn_entity_intent,
 };
+pub use kernel::entry::InitializeASI;

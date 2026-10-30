@@ -1,5 +1,13 @@
 //! Bounded cross-callback channels and their typed endpoint bundles.
-use super::*;
+use super::{
+    GameSnapshot, INTENT_QUEUE_CAPACITY, IntentOutcome, OUTCOME_QUEUE_CAPACITY,
+    SNAPSHOT_QUEUE_CAPACITY, SPAWN_INTENT_QUEUE_CAPACITY,
+};
+use crate::api::game::abi::types::Matrix4x4;
+use crate::api::scripts::console::{
+    self, ConsoleEventReceiver, ConsoleEventSink, ConsoleRequest, ConsoleRequestSender,
+};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 #[derive(Debug, Clone, Copy)]
 pub struct IntentEnvelope {
@@ -17,9 +25,9 @@ pub struct SpawnIntentEnvelope {
 pub struct GameEndpoint {
     pub console_requests: Receiver<ConsoleRequest>,
     pub console_events: ConsoleEventSink,
-    pub script_loader: crate::scripting::loader::ScriptLoader,
-    pub discovery_tx: SyncSender<crate::scripting::loader::ScriptDiscoveryResult>,
-    pub script_events: crate::scripting::ScriptEventSink,
+    pub script_loader: crate::api::scripts::loader::ScriptLoader,
+    pub discovery_tx: SyncSender<crate::api::scripts::loader::ScriptDiscoveryResult>,
+    pub script_events: crate::api::scripts::ScriptEventSink,
     pub snapshot_tx: SyncSender<GameSnapshot>,
     pub intent_rx: Receiver<IntentEnvelope>,
     pub outcome_tx: SyncSender<IntentOutcome>,
@@ -30,8 +38,8 @@ pub struct GameEndpoint {
 pub struct UiEndpoint {
     pub console_requests: ConsoleRequestSender,
     pub console_events: ConsoleEventReceiver,
-    pub discovery_requester: crate::scripting::loader::ScriptDiscoveryRequester,
-    pub discovery_rx: Receiver<crate::scripting::loader::ScriptDiscoveryResult>,
+    pub discovery_requester: crate::api::scripts::loader::ScriptDiscoveryRequester,
+    pub discovery_rx: Receiver<crate::api::scripts::loader::ScriptDiscoveryResult>,
     pub snapshot_rx: Receiver<GameSnapshot>,
     pub intent_tx: SyncSender<IntentEnvelope>,
     pub outcome_rx: Receiver<IntentOutcome>,
@@ -40,17 +48,17 @@ pub struct UiEndpoint {
 }
 
 pub fn create_endpoints() -> (GameEndpoint, UiEndpoint) {
-    let (script_events_tx, script_events_rx) = crate::scripting::event_channel();
+    let (script_events_tx, script_events_rx) = crate::api::scripts::event_channel();
     let (console_request_tx, console_request_rx) = console::request_channel();
     let (snapshot_tx, snapshot_rx) = sync_channel(SNAPSHOT_QUEUE_CAPACITY);
     let (discovery_tx, discovery_rx) =
-        sync_channel(crate::scripting::loader::LOADER_QUEUE_CAPACITY);
+        sync_channel(crate::api::scripts::loader::LOADER_QUEUE_CAPACITY);
     let (intent_tx, intent_rx) = sync_channel(INTENT_QUEUE_CAPACITY);
     let (outcome_tx, outcome_rx) = sync_channel(OUTCOME_QUEUE_CAPACITY);
     let (spawn_tx, spawn_rx) = sync_channel(SPAWN_INTENT_QUEUE_CAPACITY);
     let input_mailbox = crate::api::ecs::input::InputFrameMailbox::default();
-    let script_loader = crate::scripting::loader::ScriptLoader::start_for_game(
-        crate::scripting::engine::RhaiEngineFactory,
+    let script_loader = crate::api::scripts::loader::ScriptLoader::start_for_game(
+        crate::api::scripts::engine::RhaiEngineFactory,
     );
     let discovery_requester = script_loader.discovery_requester();
 

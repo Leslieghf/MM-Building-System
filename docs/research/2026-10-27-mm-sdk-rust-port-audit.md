@@ -51,7 +51,7 @@ The first operation should be compile-time/development-only and reversible. It s
 
 ## Rust coverage started in this repository
 
-The first Rust SDK tranche now lives under `src/sdk/`. It is a partial, source-tracked port, not yet API parity:
+The first Rust SDK tranche now lives under `src/api/game/abi/`. It is a partial, source-tracked port, not yet API parity:
 
 | Pinned SDK source | Rust surface now present | Runtime state |
 |---|---|---|
@@ -69,7 +69,7 @@ The first Rust SDK tranche now lives under `src/sdk/`. It is a partial, source-t
 | `core/graphics/graphicsengine.h` | Not translated | Existing `hudhook`/DX11 code supplies the project's rendering boundary; the SDK's broad graphics-engine data layout is not needed for core game APIs |
 | `hookmgr.*`, `imgui/`, `minhook/` | Not copied | Existing plugin/hook/overlay stack supplies this infrastructure |
 
-`src/sdk/build.rs` records address pairs from the pinned SDK and the separately recorded local Steam executable fingerprint. The existing character-manager, player-character, character-vehicle, camera-manager, and camera-matrix reads now import their shared Steam constants from this profile, so the inventory and bridge do not carry separate copies of those addresses. The profile only resolves data for explicit SDK build labels; these absolute addresses remain candidates and the module does not call them. Several SDK entries contain `0` or suspicious duplicate addresses, which are preserved as declared evidence and must not be promoted to a callable binding without inspection.
+`src/api/game/abi/build.rs` records address pairs from the pinned SDK and the separately recorded local Steam executable fingerprint. The existing character-manager, player-character, character-vehicle, camera-manager, and camera-matrix reads now import their shared Steam constants from this profile, so the inventory and bridge do not carry separate copies of those addresses. The profile only resolves data for explicit SDK build labels; these absolute addresses remain candidates and the module does not call them. Several SDK entries contain `0` or suspicious duplicate addresses, which are preserved as declared evidence and must not be promoted to a callable binding without inspection.
 
 This is a useful foundation but **not yet on-par with the community SDK**. The largest remaining gaps are exact MSVC multiple-inheritance/vtable mapping, several class-specific virtual signatures, core container/event/graphics interfaces, and a verified spawn descriptor lifecycle. SDK breadth is feasible; binary and lifecycle validation still determines which entries can become usable Rust APIs.
 

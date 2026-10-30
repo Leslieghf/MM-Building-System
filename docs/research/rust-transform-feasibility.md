@@ -1,7 +1,7 @@
 # Mad Max Player Transform Feasibility Research
 
 **Date:** 2026-10-27  
-**Plan:** `docs/superpowers/plans/2026-10-27-mad-max-rust-transform-research.md`  
+**Plan:** historical planning note; the consolidated architecture is in [`docs/architecture.md`](../architecture.md).
 **Outcome:** `NEEDS_USER_REVIEWED_PROBE_DESIGN`
 
 ## Summary
@@ -55,7 +55,7 @@ The `.xpdata` section has PE characteristics `0x40000040`, which do not include 
 
 ## 3. Current Rust plugin lifecycle
 
-Read-only source review of `src/lib.rs`, `src/overlay.rs`, and `src/game_probe.rs` found:
+Read-only source review of `src/lib.rs`, `src/devtools/overlay/mod.rs`, and `src/game_probe.rs` found:
 
 - `InitializeASI` starts a worker that installs the DX11 overlay.
 - After the overlay installs, another worker starts the existing display-mode probe.

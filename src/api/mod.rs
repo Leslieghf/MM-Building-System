@@ -2,5 +2,6 @@
 pub mod ecs;
 pub mod format;
 pub mod game;
+pub mod rhai;
 /// Script lifecycle and event contracts exposed through the modding API.
-pub use crate::scripting as scripts;
+pub mod scripts;

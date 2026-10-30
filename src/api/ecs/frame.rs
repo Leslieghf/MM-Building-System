@@ -1,5 +1,8 @@
 //! Schedule labels and copied game-frame ECS projections.
-use super::*;
+use super::{IntentOutcome, SpawnOutcome};
+use crate::api::game::abi::types::Matrix4x4;
+use bevy_ecs::prelude::*;
+use bevy_ecs::schedule::ScheduleLabel;
 
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MadMaxPostSim;

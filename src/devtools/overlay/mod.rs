@@ -6,28 +6,27 @@ use clipboard::Win32ClipboardBackend;
 use config::*;
 use panel::*;
 
+use crate::api::ecs::{MadMaxRender, RuntimeDiagnostics, UiEndpoint, spawn_entity_intent};
 use crate::api::game::abi::types::Vector3;
-use crate::api::game::probe as game_probe;
-use crate::kernel::diagnostics::append_log;
-use crate::runtime::{
-    DebugSection, MadMaxRender, OverlayMode, PendingUiInput, RuntimeDiagnostics,
-    ScriptConsoleUiState, SpawnTestUiState, UiEndpoint, UiGameSnapshot, UiPreferences,
-    UiPresentation, create_ui_app, spawn_entity_intent,
-};
-use crate::scripting::console::{
+use crate::api::game::adapter as game_probe;
+use crate::api::scripts::console::{
     ConsoleCommand, ConsoleEvent, ConsoleOutput, ConsoleRequestSender, ConsoleSeverity,
 };
+use crate::devtools::model::{
+    DebugSection, OverlayMode, PendingUiInput, ScriptConsoleUiState, SpawnTestUiState,
+    UI_OPACITY_MAX, UI_OPACITY_MIN, UiGameSnapshot, UiPreferences, UiPresentation,
+};
+use crate::devtools::presentation::{create_ui_app, flush_ui_intents};
+use crate::kernel::diagnostics::append_log;
 use bevy_app::App;
 use hudhook::hooks::dx11::ImguiDx11Hooks;
 use hudhook::windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use hudhook::windows::Win32::UI::WindowsAndMessaging::{WM_ACTIVATEAPP, WM_KILLFOCUS, WM_SETFOCUS};
 use hudhook::{Hudhook, ImguiRenderLoop, MessageFilter, imgui};
 use std::collections::VecDeque;
-use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::{Mutex, OnceLock};
-use std::thread;
 
 /// Owns one frame of ImGui presentation and the UI-side runtime bridge.
 struct OverlayRenderDriver;
@@ -44,7 +43,7 @@ thread_local! {
     static UI_RUNTIME: std::cell::RefCell<Option<UiRuntime>> = const { std::cell::RefCell::new(None) };
 }
 
-fn set_ui_endpoint(endpoint: UiEndpoint) {
+pub(crate) fn set_ui_endpoint(endpoint: UiEndpoint) {
     if UI_ENDPOINT.set(Mutex::new(Some(endpoint))).is_err() {
         append_log("Bevy UI endpoint was already initialized; keeping the original endpoint.");
     }
@@ -100,7 +99,7 @@ impl UiRuntime {
             .resource_mut::<ConsoleOutput>()
             .drain(&self.endpoint.console_events);
         let mut discoveries = Vec::new();
-        for _ in 0..crate::scripting::loader::LOADER_QUEUE_CAPACITY {
+        for _ in 0..crate::api::scripts::loader::LOADER_QUEUE_CAPACITY {
             match self.endpoint.discovery_rx.try_recv() {
                 Ok(result) => discoveries.push(result),
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
@@ -134,7 +133,7 @@ impl UiRuntime {
             },
         );
         self.app.world_mut().run_schedule(MadMaxRender);
-        crate::runtime::flush_ui_intents(&mut self.app, &self.endpoint);
+        flush_ui_intents(&mut self.app, &self.endpoint);
     }
 }
 
@@ -186,8 +185,8 @@ impl ImguiRenderLoop for OverlayRenderDriver {
                     .resource_mut::<crate::api::ecs::input::InputFrame>();
                 frame.clear_edges();
                 for key in imgui::Key::VARIANTS {
-                    if crate::api::ecs::input::key_name(key).is_some() {
-                        frame.set_down(key as u32, sample_input_key(ui, key));
+                    if let Some(key_id) = crate::devtools::input::from_imgui(key) {
+                        frame.set_down(key_id.id(), sample_input_key(ui, key));
                     }
                 }
                 *frame
@@ -330,14 +329,10 @@ impl ImguiRenderLoop for OverlayRenderDriver {
                         ui.checkbox("Vehicle", &mut preferences.show_vehicle);
                         ui.checkbox("Runtime", &mut preferences.show_runtime);
                         ui.separator();
-                        ui.slider_config(
-                            "Background opacity",
-                            crate::runtime::UI_OPACITY_MIN,
-                            crate::runtime::UI_OPACITY_MAX,
-                        )
-                        .flags(imgui::SliderFlags::ALWAYS_CLAMP)
-                        .display_format("%.2f")
-                        .build(&mut preferences.ui_opacity);
+                        ui.slider_config("Background opacity", UI_OPACITY_MIN, UI_OPACITY_MAX)
+                            .flags(imgui::SliderFlags::ALWAYS_CLAMP)
+                            .display_format("%.2f")
+                            .build(&mut preferences.ui_opacity);
                         let opacity = preferences.ui_opacity;
                         preferences.set_ui_opacity(opacity);
                         ui.text_disabled(
@@ -437,49 +432,31 @@ impl ImguiRenderLoop for OverlayRenderDriver {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn InitializeASI() {
-    let _ = panic::catch_unwind(startup);
-}
-
-fn startup() {
-    append_log("ASI entry point called; starting the DirectX 11 overlay hook.");
-    let worker = thread::Builder::new()
-        .name("madmax-overlay-hook".to_owned())
-        .spawn(start_overlay);
-    if let Err(error) = worker {
-        append_log(&format!("Could not start overlay worker: {error}"));
-    }
-}
-
-fn start_overlay() {
-    let (game_endpoint, ui_endpoint) = crate::runtime::create_endpoints();
-    game_probe::set_runtime_endpoint(game_endpoint);
-    set_ui_endpoint(ui_endpoint);
-    let result = panic::catch_unwind(|| {
-        Hudhook::builder()
-            .with::<ImguiDx11Hooks>(OverlayRenderDriver::new())
-            .build()
-            .apply()
-    });
-    match result {
-        Ok(Ok(())) => {
+pub(crate) fn install_overlay_hook() -> bool {
+    match Hudhook::builder()
+        .with::<ImguiDx11Hooks>(OverlayRenderDriver::new())
+        .build()
+        .apply()
+    {
+        Ok(()) => {
             append_log("DirectX 11 render hook installed.");
-            game_probe::start_update_callback_probe();
+            true
         }
-        Ok(Err(error)) => append_log(&format!("DirectX 11 render hook failed: {error:?}")),
-        Err(_) => append_log("Overlay setup panicked; no game operation was attempted."),
+        Err(error) => {
+            append_log(&format!("DirectX 11 render hook failed: {error:?}"));
+            false
+        }
     }
 }
 
 #[cfg(test)]
 mod scripts_tab_tests {
     use super::*;
-    use crate::scripting::{ScriptGeneration, ScriptId, ScriptStatus};
+    use crate::api::scripts::{ScriptGeneration, ScriptId, ScriptStatus};
 
     #[test]
     fn inline_toggle_submits_typed_inverse_without_console_or_prompt_changes() {
-        let (mut sender, receiver) = crate::scripting::console::request_channel();
+        let (mut sender, receiver) = crate::api::scripts::console::request_channel();
         let mut state = ScriptConsoleUiState::default();
         state.input = "keep my draft".into();
         let mut output = ConsoleOutput::default();
@@ -513,7 +490,7 @@ mod scripts_tab_tests {
 
     #[test]
     fn rejected_inline_toggle_records_one_row_error_without_changing_accepted_state() {
-        let (mut sender, receiver) = crate::scripting::console::request_channel();
+        let (mut sender, receiver) = crate::api::scripts::console::request_channel();
         drop(receiver);
         let mut state = ScriptConsoleUiState::default();
         let mut output = ConsoleOutput::default();

@@ -1,7 +1,7 @@
 //! Overlay preferences, console presentation state, and UI-facing DTOs.
 use crate::api::ecs::*;
+use crate::api::scripts::console::{ConsoleOutput, ConsoleSeverity};
 use crate::api::scripts::*;
-use crate::scripting::console::{ConsoleOutput, ConsoleSeverity};
 use bevy_ecs::prelude::*;
 use std::collections::VecDeque;
 
@@ -74,13 +74,13 @@ impl OverlayMode {
 }
 
 pub const MAX_CONSOLE_HISTORY_ENTRIES: usize = 64;
-pub const MAX_CONSOLE_STATUS_ROWS: usize = crate::scripting::manager::MAX_ACTIVE_SCRIPTS;
+pub const MAX_CONSOLE_STATUS_ROWS: usize = crate::api::scripts::manager::MAX_ACTIVE_SCRIPTS;
 
 #[derive(Debug, Clone)]
 pub struct ScriptConsoleStatusRow {
-    pub id: crate::scripting::ScriptId,
-    pub generation: crate::scripting::ScriptGeneration,
-    pub status: crate::scripting::ScriptStatus,
+    pub id: crate::api::scripts::ScriptId,
+    pub generation: crate::api::scripts::ScriptGeneration,
+    pub status: crate::api::scripts::ScriptStatus,
     pub auto_reload: bool,
     pub reload_error: Option<String>,
 }
@@ -102,7 +102,7 @@ pub struct ScriptConsoleUiState {
     pub loaded_scripts: Vec<ScriptConsoleStatusRow>,
     pub selected_script: Option<ScriptConsoleStatusRow>,
     pub active_tab: DevToolsTab,
-    pub discovered_scripts: Vec<crate::scripting::package::DiscoveredScript>,
+    pub discovered_scripts: Vec<crate::api::scripts::package::DiscoveredScript>,
     pub selected_package: Option<String>,
     pub discovery_status: String,
     pub discovery_pending: bool,
@@ -150,7 +150,7 @@ pub enum DevToolsTab {
 impl ScriptConsoleUiState {
     pub fn remember_input(&mut self) {
         if !self.input.trim().is_empty() && self.history.back() != Some(&self.input) {
-            self.history.push_back(crate::scripting::bounded_text(
+            self.history.push_back(crate::api::scripts::bounded_text(
                 &self.input,
                 console::MAX_COMMAND_BYTES,
             ));
@@ -221,7 +221,7 @@ impl ScriptConsoleUiState {
                 self.selected_script = Some(row.clone());
             }
             self.loaded_scripts.retain(|loaded| loaded.id != *id);
-            if status != crate::scripting::ScriptStatus::Unloaded {
+            if status != crate::api::scripts::ScriptStatus::Unloaded {
                 if self.loaded_scripts.len() == MAX_CONSOLE_STATUS_ROWS {
                     self.loaded_scripts.remove(0);
                 }

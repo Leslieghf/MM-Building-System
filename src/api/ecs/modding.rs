@@ -12,7 +12,7 @@ pub(crate) fn register_game_systems(app: &mut App) {
         MadMaxPostSim,
         (
             count_game_mod_phase,
-            crate::scripting::dispatch::dispatch_game_post_sim,
+            crate::api::ecs::script_dispatch::dispatch_game_post_sim,
         )
             .in_set(MadMaxPostSimSet::ModSystems),
     );

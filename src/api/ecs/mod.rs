@@ -4,9 +4,11 @@ mod config;
 mod diagnostics;
 mod frame;
 pub mod input;
+pub mod input_key;
 mod intents;
 pub(crate) mod modding;
 mod schedules;
+pub(crate) mod script_dispatch;
 mod world;
 
 pub use channels::*;
@@ -14,41 +16,24 @@ pub use config::*;
 pub use diagnostics::*;
 pub use frame::*;
 pub use intents::*;
-pub use modding::*;
 pub use schedules::*;
 pub use world::*;
-
-use crate::api::format::{
-    angles as format_angles, fixed as format_fixed, magnitude as format_magnitude,
-    vector as format_vector,
-};
-use crate::api::game::abi::game::world_query::C_CUSTOM_SAMPLED_HEIGHT_FIELD_SHAPE_VFTABLE_RVA;
-use crate::api::game::abi::types::Matrix4x4;
-use crate::scripting::console::{
-    self, ConsoleCommand, ConsoleEvent, ConsoleEventReceiver, ConsoleEventSink, ConsoleOutput,
-    ConsoleRequest, ConsoleRequestSender, ConsoleSeverity,
-};
-use bevy_app::App;
-use bevy_ecs::prelude::*;
-use bevy_ecs::schedule::{Schedule, ScheduleLabel, SingleThreadedExecutor};
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-use std::time::Instant;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scripting::{
+    use crate::api::scripts::console::{ConsoleCommand, ConsoleOutput, ConsoleSeverity};
+    use crate::api::scripts::{
         ScriptId,
         engine::RhaiEngineFactory,
         loader::{DiscoverScriptsRequest, ScriptLoader},
         manager::ScriptManager,
     };
+    use crate::devtools::model::ScriptConsoleUiState;
     use std::{
         fs,
         path::PathBuf,
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     struct Fixture(PathBuf);
@@ -68,7 +53,7 @@ mod tests {
             let (mut game, ui) = create_endpoints();
             game.script_loader = ScriptLoader::start(root.clone(), RhaiEngineFactory);
             let mut runtime = GameRuntime::new(game);
-            runtime.app.world_mut().resource_mut::<ScriptManager>().stage_prepared(crate::scripting::package::PreparedScript::compile_package(0, Self::id(), toml::from_str("id = \"example\"\napi_version = 1\ncapabilities = []\n[callbacks]\n\"game.post_sim\" = \"on_post_sim\"\n").unwrap(), "fn on_post_sim(ctx) {}", false, RhaiEngineFactory).unwrap()).unwrap();
+            runtime.app.world_mut().resource_mut::<ScriptManager>().stage_prepared(crate::api::scripts::package::PreparedScript::compile_package(0, Self::id(), toml::from_str("id = \"example\"\napi_version = 1\ncapabilities = []\n[callbacks]\n\"game.post_sim\" = \"on_post_sim\"\n").unwrap(), "fn on_post_sim(ctx) {}", false, RhaiEngineFactory).unwrap()).unwrap();
             runtime.prepare_and_run(GameSnapshot::default());
             while ui.console_events.try_recv().is_ok() {}
             (Self(root), runtime, ui)
@@ -225,7 +210,7 @@ mod tests {
         assert!(state.loaded_scripts[0].auto_reload);
         assert!(
             state.loaded_scripts[0].reload_error.as_ref().unwrap().len()
-                <= crate::scripting::MAX_EVENT_BYTES
+                <= crate::api::scripts::MAX_EVENT_BYTES
         );
         drop(fixture);
     }

@@ -64,7 +64,7 @@ pub(super) fn draw_dev_tools(
     state: &mut ScriptConsoleUiState,
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
-    discovery: &crate::scripting::loader::ScriptDiscoveryRequester,
+    discovery: &crate::api::scripts::loader::ScriptDiscoveryRequester,
     capture_input: bool,
     ui_opacity: f32,
 ) -> bool {
@@ -95,11 +95,11 @@ pub(super) fn draw_dev_tools(
         .build(|| {
             let _tabs = ui.tab_bar("dev_tools_tabs");
             if ui.tab_item("Console").is_some() {
-                state.active_tab = crate::runtime::DevToolsTab::Console;
+                state.active_tab = crate::devtools::model::DevToolsTab::Console;
                 draw_console_tab(ui, state, output, sender);
             }
             if ui.tab_item("Scripts").is_some() {
-                state.active_tab = crate::runtime::DevToolsTab::Scripts;
+                state.active_tab = crate::devtools::model::DevToolsTab::Scripts;
                 if !state.initial_scan_started {
                     state.initial_scan_started = true;
                     request_discovery(state, discovery);
@@ -125,7 +125,7 @@ pub(super) fn draw_console_tab(
         ui.text_disabled(format!(
             "{} / {} events",
             output.events().len(),
-            crate::scripting::console::MAX_SCROLLBACK_ENTRIES
+            crate::api::scripts::console::MAX_SCROLLBACK_ENTRIES
         ));
         let output_height =
             (ui.content_region_avail()[1] - ui.frame_height_with_spacing() * 2.0).max(60.0);
@@ -184,8 +184,8 @@ pub(super) fn draw_console_tab(
         let mut end = state
             .input
             .len()
-            .min(crate::scripting::console::MAX_COMMAND_BYTES);
-        if state.input.len() > crate::scripting::console::MAX_COMMAND_BYTES {
+            .min(crate::api::scripts::console::MAX_COMMAND_BYTES);
+        if state.input.len() > crate::api::scripts::console::MAX_COMMAND_BYTES {
             state.input_over_limit = true;
         }
         while !state.input.is_char_boundary(end) {
@@ -215,7 +215,7 @@ pub(super) fn draw_console_tab(
 
 pub(super) fn request_discovery(
     state: &mut ScriptConsoleUiState,
-    discovery: &crate::scripting::loader::ScriptDiscoveryRequester,
+    discovery: &crate::api::scripts::loader::ScriptDiscoveryRequester,
 ) {
     if state.discovery_pending {
         return;
@@ -224,7 +224,7 @@ pub(super) fn request_discovery(
     state.discovery_status = "Scanning package manifests…".into();
     state.pending_discovery_request = None;
     if let Err(error) = discovery
-        .try_discover(crate::scripting::loader::DiscoverScriptsRequest { request_id: None })
+        .try_discover(crate::api::scripts::loader::DiscoverScriptsRequest { request_id: None })
     {
         state.discovery_pending = false;
         state.discovery_status = format!("Could not queue package scan: {error}.");
@@ -236,7 +236,7 @@ pub(super) fn draw_scripts_tab(
     state: &mut ScriptConsoleUiState,
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
-    discovery: &crate::scripting::loader::ScriptDiscoveryRequester,
+    discovery: &crate::api::scripts::loader::ScriptDiscoveryRequester,
 ) {
     // Keep tab chrome in the parent Dev Tools window while Scripts content
     // scrolls independently inside the available tab viewport.
@@ -251,7 +251,7 @@ pub(super) fn draw_scripts_tab_contents(
     state: &mut ScriptConsoleUiState,
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
-    discovery: &crate::scripting::loader::ScriptDiscoveryRequester,
+    discovery: &crate::api::scripts::loader::ScriptDiscoveryRequester,
 ) {
     if ui.button("Rescan") {
         request_discovery(state, discovery);
@@ -340,7 +340,7 @@ pub(super) fn draw_scripts_tab_contents(
                         .any(|callback| callback.starts_with("on_run="))
                 });
                 if loaded
-                    .is_some_and(|(status, _)| status == crate::scripting::ScriptStatus::Active)
+                    .is_some_and(|(status, _)| status == crate::api::scripts::ScriptStatus::Active)
                     && on_run
                 {
                     if ui.button("Run") {
@@ -418,7 +418,7 @@ pub(super) fn draw_scripts_tab_contents(
 pub(super) fn issue_auto_reload(
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
-    item: &crate::runtime::ScriptConsoleStatusRow,
+    item: &crate::devtools::model::ScriptConsoleStatusRow,
 ) {
     if let Err(mut event) = sender.submit(ConsoleCommand::ScriptAutoReload {
         id: item.id.clone(),
@@ -440,7 +440,7 @@ pub(super) fn issue_lifecycle(
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
     action: &str,
-    id: &crate::scripting::ScriptId,
+    id: &crate::api::scripts::ScriptId,
 ) {
     let command = format!("script {action} {}", id.as_str());
     submit_console_input(state, output, sender, &command);
@@ -462,7 +462,8 @@ pub(super) fn submit_console_input(
                 record_local_command(output, input);
                 let names = imgui::Key::VARIANTS
                     .into_iter()
-                    .filter_map(crate::api::ecs::input::key_name)
+                    .filter_map(crate::devtools::input::from_imgui)
+                    .map(|key| key.name())
                     .collect::<Vec<_>>()
                     .join("  ");
                 output.record(ConsoleEvent::new(None, ConsoleSeverity::Info, &names));
@@ -478,10 +479,8 @@ pub(super) fn submit_console_input(
                     ));
                 } else {
                     for (key, command) in sender.bindings() {
-                        let key_name = imgui::Key::VARIANTS
-                            .into_iter()
-                            .find(|candidate| *candidate as u32 == *key)
-                            .and_then(crate::api::ecs::input::key_name)
+                        let key_name = crate::api::ecs::input_key::InputKey::from_id(*key)
+                            .map(|key| key.name())
                             .unwrap_or("unknown");
                         output.record(ConsoleEvent::new(
                             None,
@@ -544,10 +543,8 @@ pub(super) fn record_local_command(output: &mut ConsoleOutput, input: &str) {
 }
 
 pub(super) fn input_key_name(key: u32) -> &'static str {
-    imgui::Key::VARIANTS
-        .into_iter()
-        .find(|candidate| *candidate as u32 == key)
-        .and_then(crate::api::ecs::input::key_name)
+    crate::api::ecs::input_key::InputKey::from_id(key)
+        .map(|key| key.name())
         .unwrap_or("unknown")
 }
 
@@ -580,9 +577,8 @@ pub(super) fn fire_input_binds(runtime: &mut UiRuntime, ui: &imgui::Ui, text_inp
 }
 
 pub(super) fn bound_key_just_pressed(ui: &imgui::Ui, key: u32) -> bool {
-    let Some(key) = imgui::Key::VARIANTS
-        .into_iter()
-        .find(|candidate| *candidate as u32 == key)
+    let Some(key) =
+        crate::api::ecs::input_key::InputKey::from_id(key).map(crate::devtools::input::to_imgui)
     else {
         return false;
     };
@@ -598,7 +594,7 @@ pub(super) fn bound_key_just_pressed(ui: &imgui::Ui, key: u32) -> bool {
 
 pub(super) fn draw_console_event(
     ui: &imgui::Ui,
-    event: &crate::scripting::console::ConsoleEvent,
+    event: &crate::api::scripts::console::ConsoleEvent,
     selected_text: &mut Option<String>,
     wrap_lines: bool,
 ) {
@@ -661,8 +657,8 @@ pub(super) fn draw_console_category_header(
 
 pub(super) fn draw_script_event(
     ui: &imgui::Ui,
-    event: &crate::scripting::console::ConsoleEvent,
-    last_script_source: &mut Option<crate::scripting::ScriptId>,
+    event: &crate::api::scripts::console::ConsoleEvent,
+    last_script_source: &mut Option<crate::api::scripts::ScriptId>,
     stripe: &mut bool,
     selected_text: &mut Option<String>,
     wrap_lines: bool,
@@ -699,7 +695,7 @@ pub(super) fn draw_script_event(
 
 pub(super) fn draw_console_transcript(
     ui: &imgui::Ui,
-    events: &VecDeque<crate::scripting::console::ConsoleEvent>,
+    events: &VecDeque<crate::api::scripts::console::ConsoleEvent>,
     selected_text: &mut Option<String>,
     wrap_lines: bool,
 ) {
@@ -835,7 +831,7 @@ pub(super) fn draw_ansi_text(ui: &imgui::Ui, text: &str, severity_color: [f32; 4
             }
             params.push(control);
         }
-        if !valid || !terminated || spans >= crate::scripting::console::MAX_ANSI_SGR_SPANS {
+        if !valid || !terminated || spans >= crate::api::scripts::console::MAX_ANSI_SGR_SPANS {
             continue;
         }
         let previous = style;
@@ -974,7 +970,7 @@ pub(super) fn section_header(ui: &imgui::Ui, title: &str) {
 
 pub(super) fn draw_rows(
     ui: &imgui::Ui,
-    rows: &[crate::runtime::PresentationRow],
+    rows: &[crate::devtools::model::PresentationRow],
     section: DebugSection,
 ) {
     for row in rows.iter().filter(|row| row.section == section) {

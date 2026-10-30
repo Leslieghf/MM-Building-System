@@ -6,8 +6,8 @@ use crate::api::format::{
 };
 use crate::api::game::abi::build::steam::IMAGE_BASE as STEAM_IMAGE_BASE;
 use crate::api::game::abi::game::world_query::C_CUSTOM_SAMPLED_HEIGHT_FIELD_SHAPE_VFTABLE_RVA;
+use crate::api::scripts::console::ConsoleOutput;
 use crate::devtools::model::*;
-use crate::scripting::console::ConsoleOutput;
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule, SingleThreadedExecutor};

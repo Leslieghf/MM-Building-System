@@ -31,4 +31,4 @@ Global UI capture suppresses all Mad Max input while the mod owns focus. With gl
 
 - Hudhook 0.9.3 source: `renderer/pipeline.rs` (queued messages and synchronous category filter), `renderer/input.rs` (keyboard/Raw Input translation), and `renderer/msg_filter.rs` (input categories).
 - Microsoft Learn: [XInput APIs](https://learn.microsoft.com/en-us/windows/win32/xinput/) describe controller input; [Using Raw Input](https://learn.microsoft.com/en-us/windows/win32/inputdev/using-raw-input) describes `WM_INPUT` device events.
-- Runtime integration points: `src/overlay.rs`, `src/runtime.rs`, `src/modding.rs`, `src/scripting/api.rs`, and `src/scripting/console.rs`.
+- Runtime integration points: `src/devtools/overlay/mod.rs`, `src/runtime.rs`, `src/api/ecs/modding.rs`, `src/api/rhai/bindings.rs`, and `src/api/scripts/console.rs`.
