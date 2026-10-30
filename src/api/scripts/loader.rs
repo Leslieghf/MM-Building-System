@@ -2,9 +2,7 @@
 mod discovery;
 use super::{
     engine::RhaiEngineFactory,
-    package::{
-        DiscoveredScript, MAX_MANIFEST_BYTES, PreparedScript, ScriptManifest, ScriptManifestSummary,
-    },
+    package::{DiscoveredScript, MAX_MANIFEST_BYTES, PreparedScript, ScriptManifest},
     *,
 };
 use std::{
@@ -341,19 +339,19 @@ impl WorkerWatches {
                 continue;
             }
             let snapshot = package_snapshot(root, id);
-            if self.tracker.observe(id, snapshot.fingerprint.clone()) {
-                if let Ok(request_id) = super::console::next_request_id() {
-                    // Allocate now: a later manual submission must have a newer ID,
-                    // even when this notice waits in a saturated queue.
-                    delivery.unsent = Some(LoadScriptRequest {
-                        request_id,
-                        id: id.clone(),
-                        replace: true,
-                        snapshot: Some(snapshot),
-                    });
-                    delivery.pending.store(true, Ordering::Release);
-                    delivery.overflow_reported = false;
-                }
+            if self.tracker.observe(id, snapshot.fingerprint.clone())
+                && let Ok(request_id) = super::console::next_request_id()
+            {
+                // Allocate now: a later manual submission must have a newer ID,
+                // even when this notice waits in a saturated queue.
+                delivery.unsent = Some(LoadScriptRequest {
+                    request_id,
+                    id: id.clone(),
+                    replace: true,
+                    snapshot: Some(snapshot),
+                });
+                delivery.pending.store(true, Ordering::Release);
+                delivery.overflow_reported = false;
             }
         }
         self.flush(notifications);
@@ -546,6 +544,7 @@ fn opened_path(_file: &File) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::time::{Duration, Instant};
 
     struct PackageRoot(PathBuf);

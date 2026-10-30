@@ -117,7 +117,7 @@ pub(in crate::api::game::adapter) unsafe extern "system" fn weapon_ray_position_
     ray: *const f32,
 ) -> *mut f32 {
     let call = WEAPON_RAY_POSITION_CALLS.fetch_add(1, Ordering::Relaxed) + 1;
-    let sample_this_call = call <= 8 || call % 30 == 0;
+    let sample_this_call = call <= 8 || call.is_multiple_of(30);
     let ray_values =
         if sample_this_call && !ray.is_null() && readable_span(ray as usize, size_of::<[f32; 6]>())
         {

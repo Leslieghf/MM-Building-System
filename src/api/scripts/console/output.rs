@@ -90,7 +90,28 @@ impl ConsoleOutput {
 }
 
 pub fn emit_help(sink: &ConsoleEventSink, request_id: u64, topic: Option<&str>) {
-    let lines: &[&str] = match topic {
+    let lines = match help_lines(topic) {
+        Ok(lines) => lines,
+        Err(unknown) => {
+            sink.emit(ConsoleEvent::new(
+                Some(request_id),
+                ConsoleSeverity::Error,
+                &format!("No help topic for '{unknown}'. Use help for the command index."),
+            ));
+            return;
+        }
+    };
+    for line in lines {
+        sink.emit(ConsoleEvent::new(
+            Some(request_id),
+            ConsoleSeverity::Info,
+            line,
+        ));
+    }
+}
+
+fn help_lines(topic: Option<&str>) -> Result<&'static [&'static str], &str> {
+    Ok(match topic {
         None => &[
             "Commands",
             "  help [command]                 Show all commands or command details",
@@ -140,20 +161,6 @@ pub fn emit_help(sink: &ConsoleEventSink, request_id: u64, topic: Option<&str>) 
         Some("script status") => {
             &["Show that script's status, callbacks, and pending preparation."]
         }
-        Some(unknown) => {
-            sink.emit(ConsoleEvent::new(
-                Some(request_id),
-                ConsoleSeverity::Error,
-                &format!("No help topic for '{unknown}'. Use help for the command index."),
-            ));
-            return;
-        }
-    };
-    for line in lines {
-        sink.emit(ConsoleEvent::new(
-            Some(request_id),
-            ConsoleSeverity::Info,
-            line,
-        ));
-    }
+        Some(unknown) => return Err(unknown),
+    })
 }

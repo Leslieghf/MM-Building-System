@@ -666,18 +666,10 @@ fn take_runtime_endpoint() -> Option<GameEndpoint> {
         .take()
 }
 
-fn publish_vehicle_sample(
-    sample_data: Option<(
-        Option<Matrix4x4>,
-        Option<[f32; 3]>,
-        Option<[f32; 3]>,
-        Option<[f32; 3]>,
-        Option<[f32; 3]>,
-    )>,
-) {
+fn publish_vehicle_sample(sample_data: Option<VehicleTelemetry>) {
     let now = Instant::now();
-    let (transform, velocity, acceleration, angular_velocity, velocity_last_frame) =
-        sample_data.unwrap_or((None, None, None, None, None));
+    let telemetry = sample_data.unwrap_or_default();
+    let transform = telemetry.transform;
     let (position, rotation) = transform.map_or((None, None), |transform| {
         let position = [
             transform.values[3][0],
@@ -698,15 +690,15 @@ fn publish_vehicle_sample(
     sample.forward = transform.as_ref().and_then(horizontal_forward);
     sample.transform = transform;
     sample.rotation = rotation;
-    sample.velocity = velocity;
-    sample.acceleration = acceleration;
-    sample.angular_velocity = angular_velocity;
-    sample.velocity_last_frame = velocity_last_frame;
+    sample.velocity = telemetry.velocity;
+    sample.acceleration = telemetry.acceleration;
+    sample.angular_velocity = telemetry.angular_velocity;
+    sample.velocity_last_frame = telemetry.velocity_last_frame;
     sample.sampled_at = (position.is_some()
-        || velocity.is_some()
-        || acceleration.is_some()
-        || angular_velocity.is_some()
-        || velocity_last_frame.is_some())
+        || telemetry.velocity.is_some()
+        || telemetry.acceleration.is_some()
+        || telemetry.angular_velocity.is_some()
+        || telemetry.velocity_last_frame.is_some())
     .then_some(now);
 }
 

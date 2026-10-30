@@ -127,7 +127,7 @@ pub fn render_markdown() -> String {
             output.push_str(&format!("- `{method}`\n"));
         }
         output.push_str(&format!(
-            "\n### Availability and limits\n\n{}\n",
+            "\n### Errors, availability, and limits\n\n{}\n",
             descriptor.unavailable
         ));
     }

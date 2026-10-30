@@ -211,11 +211,10 @@ impl ScriptManager {
             .active
             .get(&id)
             .is_some_and(|script| script.auto_reload)
+            && let Err(message) = loader.set_auto_reload(id.clone(), false)
         {
-            if let Err(message) = loader.set_auto_reload(id.clone(), false) {
-                self.report_failure(id, request_id, message);
-                return Err(message);
-            }
+            self.report_failure(id, request_id, message);
+            return Err(message);
         }
         self.stage_unload_request(id, request_id)
     }
@@ -438,135 +437,168 @@ impl ScriptManager {
             };
             match change {
                 PendingChange::Install(prepared, tracked) => {
-                    let request_id = prepared.request_id();
-                    let prepared_id =
-                        ScriptId::parse(prepared.manifest().id.clone()).expect("validated ID");
-                    if tracked {
-                        if !self
-                            .load_requests
-                            .get(&prepared_id)
-                            .is_some_and(|load| load.request_id == request_id)
-                        {
-                            continue;
-                        }
-                        self.load_requests.remove(&prepared_id);
-                    }
-                    let (id, ast, callbacks, on_run, capabilities, replace) = prepared.into_parts();
-                    if !replace && self.active.contains_key(&id) {
-                        self.report_reload_failure(
-                            id,
-                            Some(request_id),
-                            "load rejected: script already loaded; use reload",
-                        );
-                        continue;
-                    }
-                    if !self.active.contains_key(&id) && self.active.len() >= MAX_ACTIVE_SCRIPTS {
-                        self.report_reload_failure(
-                            id,
-                            Some(request_id),
-                            "active script limit reached",
-                        );
-                        continue;
-                    }
-                    let Some(next) = self.next_generation.checked_add(1) else {
-                        self.report_reload_failure(
-                            id,
-                            Some(request_id),
-                            "generation counter exhausted",
-                        );
-                        continue;
-                    };
-                    let generation = ScriptGeneration(self.next_generation);
-                    self.next_generation = next;
-                    self.cancel_runs(&id);
-                    let mut scope = Scope::new();
-                    scope.push("state", Map::new());
-
-                    let auto_reload = self
-                        .active
-                        .get(&id)
-                        .is_some_and(|script| script.auto_reload);
-                    let latest_load_request_id =
-                        self.active.get(&id).map_or(request_id, |script| {
-                            script.latest_load_request_id.max(request_id)
-                        });
-                    let deferred_auto_reload = self
-                        .active
-                        .get_mut(&id)
-                        .and_then(|script| script.deferred_auto_reload.take());
-                    self.active.insert(
-                        id.clone(),
-                        ActiveScript {
-                            ast,
-                            capabilities,
-                            scope,
-                            generation,
-                            callbacks,
-                            on_run,
-                            status: ScriptStatus::Active,
-                            auto_reload,
-                            reload_error: None,
-                            latest_load_request_id,
-                            deferred_auto_reload,
-                        },
-                    );
-                    self.report_request(
-                        id,
-                        generation,
-                        ScriptStatus::Active,
-                        Some(request_id),
-                        if replace { "Reloaded" } else { "Loaded" },
-                    );
+                    self.install_prepared(prepared, tracked)
                 }
-                PendingChange::Unload(id, request_id) => {
-                    self.cancel_runs(&id);
-                    if let Some(old) = self.active.remove(&id) {
-                        self.report_request(
-                            id,
-                            old.generation,
-                            ScriptStatus::Unloaded,
-                            request_id,
-                            "Unloaded",
-                        );
-                    } else {
-                        self.report_request(
-                            id,
-                            ScriptGeneration(0),
-                            ScriptStatus::Unloaded,
-                            request_id,
-                            "script is not loaded",
-                        );
-                    }
-                }
-                PendingChange::Run(id, request_id) => {
-                    if let Some(script) = self.active.get(&id) {
-                        let rejection = if script.on_run.is_none() {
-                            Some("script has no on_run entry point")
-                        } else if script.status != ScriptStatus::Active {
-                            Some("run rejected: script is disabled")
-                        } else if self.runs.len() >= MAX_RUNS_PER_PHASE {
-                            Some("run rejected: run queue full")
-                        } else {
-                            None
-                        };
-                        if let Some(message) = rejection {
-                            self.report_failure(id, request_id, message);
-                        } else {
-                            self.report_request(
-                                id.clone(),
-                                script.generation,
-                                script.status,
-                                request_id,
-                                "Queued",
-                            );
-                            self.runs.push((id, script.generation, request_id));
-                        }
-                    } else {
-                        self.report_failure(id, request_id, "script is not loaded");
-                    }
-                }
+                PendingChange::Unload(id, request_id) => self.unload_script(id, request_id),
+                PendingChange::Run(id, request_id) => self.queue_script_run(id, request_id),
             }
         }
+    }
+
+    fn install_prepared(&mut self, prepared: PreparedScript, tracked: bool) {
+        let request_id = prepared.request_id();
+        let prepared_id = ScriptId::parse(prepared.manifest().id.clone()).expect("validated ID");
+        if tracked && !self.is_latest_load(&prepared_id, request_id) {
+            return;
+        }
+        if tracked {
+            self.load_requests.remove(&prepared_id);
+        }
+        let (id, ast, callbacks, on_run, capabilities, replace) = prepared.into_parts();
+        if !self.can_install(&id, replace, request_id) {
+            return;
+        }
+        let Some(generation) = self.allocate_generation(&id, request_id) else {
+            return;
+        };
+        self.activate_script(
+            id,
+            ast,
+            callbacks,
+            on_run,
+            capabilities,
+            replace,
+            request_id,
+            generation,
+        );
+    }
+
+    fn is_latest_load(&self, id: &ScriptId, request_id: u64) -> bool {
+        self.load_requests
+            .get(id)
+            .is_some_and(|load| load.request_id == request_id)
+    }
+
+    fn can_install(&mut self, id: &ScriptId, replace: bool, request_id: u64) -> bool {
+        if !replace && self.active.contains_key(id) {
+            self.report_reload_failure(
+                id.clone(),
+                Some(request_id),
+                "load rejected: script already loaded; use reload",
+            );
+            return false;
+        }
+        if !self.active.contains_key(id) && self.active.len() >= MAX_ACTIVE_SCRIPTS {
+            self.report_reload_failure(id.clone(), Some(request_id), "active script limit reached");
+            return false;
+        }
+        true
+    }
+
+    fn allocate_generation(&mut self, id: &ScriptId, request_id: u64) -> Option<ScriptGeneration> {
+        let Some(next) = self.next_generation.checked_add(1) else {
+            self.report_reload_failure(
+                id.clone(),
+                Some(request_id),
+                "generation counter exhausted",
+            );
+            return None;
+        };
+        let generation = ScriptGeneration(self.next_generation);
+        self.next_generation = next;
+        Some(generation)
+    }
+
+    fn activate_script(
+        &mut self,
+        id: ScriptId,
+        ast: AST,
+        callbacks: BTreeMap<ScriptPhaseId, String>,
+        on_run: Option<String>,
+        capabilities: Vec<String>,
+        replace: bool,
+        request_id: u64,
+        generation: ScriptGeneration,
+    ) {
+        self.cancel_runs(&id);
+        let mut scope = Scope::new();
+        scope.push("state", Map::new());
+        let auto_reload = self
+            .active
+            .get(&id)
+            .is_some_and(|script| script.auto_reload);
+        let latest_load_request_id = self.active.get(&id).map_or(request_id, |script| {
+            script.latest_load_request_id.max(request_id)
+        });
+        let deferred_auto_reload = self
+            .active
+            .get_mut(&id)
+            .and_then(|script| script.deferred_auto_reload.take());
+        self.active.insert(
+            id.clone(),
+            ActiveScript {
+                ast,
+                capabilities,
+                scope,
+                generation,
+                callbacks,
+                on_run,
+                status: ScriptStatus::Active,
+                auto_reload,
+                reload_error: None,
+                latest_load_request_id,
+                deferred_auto_reload,
+            },
+        );
+        self.report_request(
+            id,
+            generation,
+            ScriptStatus::Active,
+            Some(request_id),
+            if replace { "Reloaded" } else { "Loaded" },
+        );
+    }
+
+    fn unload_script(&mut self, id: ScriptId, request_id: Option<u64>) {
+        self.cancel_runs(&id);
+        let generation = self
+            .active
+            .remove(&id)
+            .map_or(ScriptGeneration(0), |script| script.generation);
+        let text = if generation.0 == 0 {
+            "script is not loaded"
+        } else {
+            "Unloaded"
+        };
+        self.report_request(id, generation, ScriptStatus::Unloaded, request_id, text);
+    }
+
+    fn queue_script_run(&mut self, id: ScriptId, request_id: Option<u64>) {
+        let Some(script) = self.active.get(&id) else {
+            self.report_failure(id, request_id, "script is not loaded");
+            return;
+        };
+        let rejection = if script.on_run.is_none() {
+            Some("script has no on_run entry point")
+        } else if script.status != ScriptStatus::Active {
+            Some("run rejected: script is disabled")
+        } else if self.runs.len() >= MAX_RUNS_PER_PHASE {
+            Some("run rejected: run queue full")
+        } else {
+            None
+        };
+        if let Some(message) = rejection {
+            self.report_failure(id, request_id, message);
+            return;
+        }
+        self.report_request(
+            id.clone(),
+            script.generation,
+            script.status,
+            request_id,
+            "Queued",
+        );
+        self.runs.push((id, script.generation, request_id));
     }
     fn report_request(
         &self,
@@ -633,30 +665,29 @@ impl ScriptManager {
         runs.sort_by(|a, b| a.0.cmp(&b.0));
         // All one-shots precede all recurring callbacks. Duplicate requests run once each.
         for (id, generation, request_id) in runs {
-            if let Some(script) = self.active.get_mut(&id) {
-                if script.generation == generation {
-                    if let Some(function) = script.on_run.clone() {
-                        invocation::invoke(
-                            &self.engine,
-                            &self.events,
-                            &id,
-                            script,
-                            &function,
-                            snapshot,
-                            request_id,
-                            capacity,
-                            &mut effects,
-                            MAX_DEBUG_DRAWS_PER_PHASE.saturating_sub(debug_draws.len()),
-                            MAX_DEBUG_DRAW_WORK_PER_PHASE.saturating_sub(
-                                debug_draws
-                                    .iter()
-                                    .map(|effect| effect.primitive.work_cost())
-                                    .sum(),
-                            ),
-                            &mut debug_draws,
-                        );
-                    }
-                }
+            if let Some(script) = self.active.get_mut(&id)
+                && script.generation == generation
+                && let Some(function) = script.on_run.clone()
+            {
+                invocation::invoke(
+                    &self.engine,
+                    &self.events,
+                    &id,
+                    script,
+                    &function,
+                    snapshot,
+                    request_id,
+                    capacity,
+                    &mut effects,
+                    MAX_DEBUG_DRAWS_PER_PHASE.saturating_sub(debug_draws.len()),
+                    MAX_DEBUG_DRAW_WORK_PER_PHASE.saturating_sub(
+                        debug_draws
+                            .iter()
+                            .map(|effect| effect.primitive.work_cost())
+                            .sum(),
+                    ),
+                    &mut debug_draws,
+                );
             }
         }
         for (id, script) in &mut self.active {

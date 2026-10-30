@@ -52,12 +52,11 @@ pub(super) fn run_bevy_game_frame(thread_id: u32, overlap_epoch: u64) {
     trace_game_runtime_stage(3, "game snapshot copied");
     GAME_RUNTIME.with(|runtime_cell| {
         let mut runtime_cell = runtime_cell.borrow_mut();
-        if runtime_cell.is_none() {
-            if let Some(endpoint) = take_runtime_endpoint() {
+        if runtime_cell.is_none()
+            && let Some(endpoint) = take_runtime_endpoint() {
                 *runtime_cell = Some(GameRuntime::new(endpoint));
                 trace_game_runtime_stage(4, "Bevy game runtime initialized");
             }
-        }
         let Some(runtime) = runtime_cell.as_mut() else {
             return;
         };

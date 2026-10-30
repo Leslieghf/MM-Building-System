@@ -376,7 +376,9 @@ pub(in crate::api::game::adapter) fn log_world_query_samples() {
             std::array::from_fn(|slot| sample.xmm_registers[slot].load(Ordering::Relaxed));
         let nonvolatile_xmm_text = sample
             .nonvolatile_xmm_registers
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .enumerate()
             .map(|(index, pair)| {
                 format!(

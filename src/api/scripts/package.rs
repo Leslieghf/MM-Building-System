@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn debug_gizmo_example_manifest_and_rhai_compile() {
         let manifest: ScriptManifest = toml::from_str(include_str!(
-            "../../examples/scripts/debug_gizmo/manifest.toml"
+            "../../../examples/scripts/debug_gizmo/manifest.toml"
         ))
         .expect("debug_gizmo manifest should parse");
         let id = ScriptId::parse("debug_gizmo").expect("example ID should be valid");
@@ -122,7 +122,7 @@ mod tests {
             0,
             id,
             manifest,
-            include_str!("../../examples/scripts/debug_gizmo/main.rhai"),
+            include_str!("../../../examples/scripts/debug_gizmo/main.rhai"),
             true,
             RhaiEngineFactory,
         )
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn debug_orientation_example_manifest_and_rhai_compile() {
         let manifest: ScriptManifest = toml::from_str(include_str!(
-            "../../examples/scripts/debug_orientation/manifest.toml"
+            "../../../examples/scripts/debug_orientation/manifest.toml"
         ))
         .expect("debug_orientation manifest should parse");
         let id = ScriptId::parse("debug_orientation").expect("example ID should be valid");
@@ -141,7 +141,7 @@ mod tests {
             0,
             id,
             manifest,
-            include_str!("../../examples/scripts/debug_orientation/main.rhai"),
+            include_str!("../../../examples/scripts/debug_orientation/main.rhai"),
             true,
             RhaiEngineFactory,
         )

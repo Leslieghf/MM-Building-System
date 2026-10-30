@@ -45,18 +45,17 @@ pub(in crate::api::game::adapter) fn apply_spawn_intent(
     pending: &PendingSpawnIntent,
     overlap_epoch: u64,
 ) -> SpawnOutcome {
-    let outcome = |result, native_return| SpawnOutcome {
-        request_id: pending.request_id,
-        result,
-        native_return,
-    };
     if CALLBACK_IN_FLIGHT.load(Ordering::Acquire) != 1
         || CALLBACK_OVERLAP_EPOCH.load(Ordering::Acquire) != overlap_epoch
     {
-        return outcome(SpawnRequestResult::CallbackNotExclusive, None);
+        return spawn_outcome(
+            pending.request_id,
+            SpawnRequestResult::CallbackNotExclusive,
+            None,
+        );
     }
     let Ok(asset_key) = CString::new(format!("{}.ee", pending.asset_key)) else {
-        return outcome(SpawnRequestResult::InvalidRequest, None);
+        return spawn_outcome(pending.request_id, SpawnRequestResult::InvalidRequest, None);
     };
     if !pending
         .matrix
@@ -66,10 +65,14 @@ pub(in crate::api::game::adapter) fn apply_spawn_intent(
         .all(|value| value.is_finite())
         || pending.request_id == 0
     {
-        return outcome(SpawnRequestResult::InvalidRequest, None);
+        return spawn_outcome(pending.request_id, SpawnRequestResult::InvalidRequest, None);
     }
     if pending.request_id > u64::from(u32::MAX) {
-        return outcome(SpawnRequestResult::SpawnIdUnavailable, None);
+        return spawn_outcome(
+            pending.request_id,
+            SpawnRequestResult::SpawnIdUnavailable,
+            None,
+        );
     }
     if ![
         SPAWN_INFO_CTOR,
@@ -80,9 +83,17 @@ pub(in crate::api::game::adapter) fn apply_spawn_intent(
     .into_iter()
     .all(is_readable_executable_page)
     {
-        return outcome(SpawnRequestResult::NativeSymbolUnavailable, None);
+        return spawn_outcome(
+            pending.request_id,
+            SpawnRequestResult::NativeSymbolUnavailable,
+            None,
+        );
     }
 
+    submit_spawn_native(pending, &asset_key)
+}
+
+fn submit_spawn_native(pending: &PendingSpawnIntent, asset_key: &CString) -> SpawnOutcome {
     let constructor: SpawnInfoConstructorFn = unsafe { std::mem::transmute(SPAWN_INFO_CTOR) };
     let destructor: SpawnInfoDestructorFn = unsafe { std::mem::transmute(SPAWN_INFO_DTOR) };
     let set_entity_file: SetEntityFileFn = unsafe { std::mem::transmute(SPAWN_SET_ENTITY_FILE) };
@@ -118,5 +129,21 @@ pub(in crate::api::game::adapter) fn apply_spawn_intent(
 
     let mut matrix = pending.matrix;
     let native_return = unsafe { spawn(info, &mut matrix) };
-    outcome(SpawnRequestResult::NativeCallSubmitted, Some(native_return))
+    spawn_outcome(
+        pending.request_id,
+        SpawnRequestResult::NativeCallSubmitted,
+        Some(native_return),
+    )
+}
+
+fn spawn_outcome(
+    request_id: u64,
+    result: SpawnRequestResult,
+    native_return: Option<usize>,
+) -> SpawnOutcome {
+    SpawnOutcome {
+        request_id,
+        result,
+        native_return,
+    }
 }

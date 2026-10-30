@@ -53,7 +53,18 @@ fn prepare_presentation(
     let data = snapshot.0;
     let rows = &mut presentation.0;
     rows.clear();
-    rows.reserve(18);
+    rows.reserve(31);
+    append_player_rows(&data, rows);
+    append_camera_rows(&data, rows);
+    append_static_query_rows(&data, rows);
+    append_player_aim_rows(&data, rows);
+    append_ignore_actor_rows(&data, rows);
+    append_ignore_owner_rows(&data, rows);
+    append_vehicle_rows(&data, rows);
+    append_runtime_rows(&data, &diagnostics, rows);
+}
+
+fn append_player_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     rows.push(row(
         DebugSection::Player,
         "Position",
@@ -74,11 +85,23 @@ fn prepare_presentation(
         "Acceleration magnitude (estimated)",
         format_magnitude(data.player_acceleration, " units/s²"),
     ));
+}
+
+fn append_camera_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     rows.push(row(
         DebugSection::Camera,
         "Rotation (view)",
         format_angles(data.view_rotation),
     ));
+}
+
+fn append_static_query_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
+    append_reticle_query_status(data, rows);
+    append_reticle_ray(data, rows);
+    append_reticle_hit(data, rows);
+}
+
+fn append_reticle_query_status(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     rows.push(row(
         DebugSection::Raycast,
         "Static-only query",
@@ -95,6 +118,9 @@ fn prepare_presentation(
             "unavailable".to_owned()
         },
     ));
+}
+
+fn append_reticle_ray(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     rows.push(row(
         DebugSection::Raycast,
         "Ray origin",
@@ -105,6 +131,9 @@ fn prepare_presentation(
         "Ray direction",
         format_vector(data.reticle_ray_direction),
     ));
+}
+
+fn append_reticle_hit(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     rows.push(row(
         DebugSection::Raycast,
         "Static-only hit fraction",
@@ -147,6 +176,9 @@ fn prepare_presentation(
             data.reticle_hit_fraction,
         ),
     ));
+}
+
+fn append_player_aim_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     rows.push(row(
         DebugSection::Raycast,
         "Player-aim query",
@@ -206,6 +238,9 @@ fn prepare_presentation(
             data.player_aim_hit_fraction,
         ),
     ));
+}
+
+fn append_ignore_actor_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     rows.push(row(
         DebugSection::Raycast,
         "Ignore characters/vehicles query",
@@ -263,7 +298,9 @@ fn prepare_presentation(
             data.ignore_characters_vehicles_hit_fraction,
         ),
     ));
+}
 
+fn append_ignore_owner_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     rows.push(row(
         DebugSection::Raycast,
         "Ignore-player-owner query",
@@ -320,7 +357,9 @@ fn prepare_presentation(
             data.ignore_player_owner_hit_fraction,
         ),
     ));
+}
 
+fn append_vehicle_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     let vehicle_status = if data.vehicle_position.is_some()
         || data.vehicle_velocity.is_some()
         || data.vehicle_acceleration.is_some()
@@ -362,6 +401,13 @@ fn prepare_presentation(
         "Previous-frame speed magnitude",
         format_magnitude(data.vehicle_velocity_last_frame, ""),
     ));
+}
+
+fn append_runtime_rows(
+    data: &GameSnapshot,
+    diagnostics: &RuntimeDiagnostics,
+    rows: &mut Vec<PresentationRow>,
+) {
     rows.push(row(
         DebugSection::Runtime,
         "Frame delta",

@@ -1,18 +1,20 @@
 # Using Rhai scripts
 
-Rhai packages are the supported user-authored extension format. A package is a directory under `MadMaxModding/scripts` beside `MadMax.exe`:
+Rhai is the supported user-authored extension format. Packages live beside `MadMax.exe` under `MadMaxModding/scripts/`.
+
+## Quick start
+
+Build the ASI using [Development](development.md), then copy a package such as [`vehicle_watch`](../examples/scripts/vehicle_watch) into the scripts folder:
 
 ```text
-MadMaxModding/
-  scripts/
-    vehicle_watch/
-      manifest.toml
-      main.rhai
+MadMaxModding/scripts/vehicle_watch/
+  manifest.toml
+  main.rhai
 ```
 
-The repository includes [`vehicle_watch`](../examples/scripts/vehicle_watch) and [`vehicle_jump`](../examples/scripts/vehicle_jump). Copy a package directory into the game-side scripts folder; building the ASI does not install scripts.
+Open Dev Tools with **F3**, choose **Scripts → Rescan** if the package was added after startup, then select it and choose **Load**.
 
-## Manifest and callbacks
+## Package contract
 
 ```toml
 id = "vehicle_watch"
@@ -24,9 +26,9 @@ capabilities = ["game.read", "log"]
 on_run = "on_run"
 ```
 
-The directory, requested ID, and manifest ID must match. IDs use lowercase ASCII letters, digits, `_`, and `-`. `main.rhai` defines one-argument callback functions; package top-level statements are not run. Each script generation has its own persistent `state` map.
+The package directory, requested ID, and manifest ID must match. IDs contain lowercase ASCII letters, digits, `_`, or `-`. Callback functions accept one context argument. Top-level statements do not run. `state` persists for one loaded generation and resets after a successful reload.
 
-In Mad Max, press **F3** to open Dev Tools and use **Scripts → Rescan** if the package was copied while the game was open. Select a valid package and choose **Load**. Use the Console for commands such as:
+## Console commands
 
 ```text
 help
@@ -37,10 +39,16 @@ script reload vehicle_watch
 script unload vehicle_watch
 ```
 
-Loading, running, reloading, and unloading are explicit actions. Discovery validates bounded package metadata; it does not compile or execute a script until Load or Reload is requested. A failed reload preserves the active generation. A callback error disables that generation; a successful reload creates a fresh generation and state.
+`script list` discovers manifests without compiling or executing scripts. Load and reload compile explicitly. A failed reload leaves the active generation running; a callback error disables that generation.
 
-## Capabilities and safety
+## Capabilities
 
-API v1 capabilities are `game.read`, `log`, `input.read`, `game.vehicle.write`, and `debug.draw`. A package must declare the capabilities it uses. `ctx.frame` and pure `ctx.math` helpers are always available. Game data comes from copied snapshots, not live pointers. Vehicle writes and debug drawing are validated, bounded effects processed by the game callback. Scripts have no arbitrary FFI, filesystem, process, network, or module-import access.
+API v1 capabilities are `game.read`, `log`, `input.read`, `game.vehicle.write`, and `debug.draw`. Frame metadata and pure `ctx.math` helpers need no capability.
 
-For exact values, signatures, coordinate conventions, limits, and experimental methods, see the generated [Rhai API v1 reference](rhai-api.md). The `vehicle_watch` example only logs observations; `vehicle_jump` demonstrates a one-shot velocity request and should be used only with awareness that native behavior awaits further in-game verification.
+## Errors
+
+Undeclared capability access and invalid API arguments raise script errors. Invalid manifests are shown as invalid packages. A callback error disables its active generation; a failed reload leaves the current generation running.
+
+## Safety and limits
+
+Scripts receive copied snapshots. They cannot access arbitrary FFI, files, processes, networks, or modules. Vehicle writes and debug drawing are validated, bounded requests handled by the game callback. Native vehicle-write and renderer behavior remains experimental pending in-game verification. Exact signatures, values, coordinate conventions, and limits are in the generated [Rhai API v1 reference](rhai-api.md).

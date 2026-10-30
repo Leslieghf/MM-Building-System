@@ -294,66 +294,62 @@ pub(super) fn draw_scripts_tab_contents(
                 }
             }
         });
-    if let Some(selected_name) = state.selected_package.clone() {
-        if let Some(row) = state
+    if let Some(selected_name) = state.selected_package.clone()
+        && let Some(row) = state
             .discovered_scripts
             .iter()
             .find(|row| row.package_name == selected_name)
             .cloned()
-        {
+    {
+        ui.separator();
+        if let Some(manifest) = &row.manifest {
+            ui.text(format!("API v{}", manifest.api_version));
+            ui.text_wrapped(format!("Callbacks: {}", manifest.callbacks.join(", ")));
+            ui.text_wrapped(format!(
+                "Capabilities: {}",
+                if manifest.capabilities.is_empty() {
+                    "none".to_owned()
+                } else {
+                    manifest.capabilities.join(", ")
+                }
+            ));
+        }
+        if let Some(issue) = &row.issue {
+            ui.text_colored([1.0, 0.48, 0.45, 1.0], format!("Invalid: {issue}"));
+        }
+        if let Some(id) = &row.id {
+            let loaded = state
+                .loaded_scripts
+                .iter()
+                .find(|item| &item.id == id)
+                .map(|item| (item.status, item.generation));
+            let valid = row.issue.is_none() && row.manifest.is_some();
             ui.separator();
-            if let Some(manifest) = &row.manifest {
-                ui.text(format!("API v{}", manifest.api_version));
-                ui.text_wrapped(format!("Callbacks: {}", manifest.callbacks.join(", ")));
-                ui.text_wrapped(format!(
-                    "Capabilities: {}",
-                    if manifest.capabilities.is_empty() {
-                        "none".to_owned()
-                    } else {
-                        manifest.capabilities.join(", ")
-                    }
-                ));
+            if valid && loaded.is_none() && ui.button("Load") {
+                issue_lifecycle(state, output, sender, "load", id);
             }
-            if let Some(issue) = &row.issue {
-                ui.text_colored([1.0, 0.48, 0.45, 1.0], format!("Invalid: {issue}"));
+            if valid && loaded.is_some() {
+                if ui.button("Reload") {
+                    issue_lifecycle(state, output, sender, "reload", id);
+                }
+                ui.same_line();
             }
-            if let Some(id) = &row.id {
-                let loaded = state
-                    .loaded_scripts
+            let on_run = row.manifest.as_ref().is_some_and(|manifest| {
+                manifest
+                    .callbacks
                     .iter()
-                    .find(|item| &item.id == id)
-                    .map(|item| (item.status, item.generation));
-                let valid = row.issue.is_none() && row.manifest.is_some();
-                ui.separator();
-                if valid && loaded.is_none() {
-                    if ui.button("Load") {
-                        issue_lifecycle(state, output, sender, "load", id);
-                    }
+                    .any(|callback| callback.starts_with("on_run="))
+            });
+            if loaded.is_some_and(|(status, _)| status == crate::api::scripts::ScriptStatus::Active)
+                && on_run
+            {
+                if ui.button("Run") {
+                    issue_lifecycle(state, output, sender, "run", id);
                 }
-                if valid && loaded.is_some() {
-                    if ui.button("Reload") {
-                        issue_lifecycle(state, output, sender, "reload", id);
-                    }
-                    ui.same_line();
-                }
-                let on_run = row.manifest.as_ref().is_some_and(|manifest| {
-                    manifest
-                        .callbacks
-                        .iter()
-                        .any(|callback| callback.starts_with("on_run="))
-                });
-                if loaded
-                    .is_some_and(|(status, _)| status == crate::api::scripts::ScriptStatus::Active)
-                    && on_run
-                {
-                    if ui.button("Run") {
-                        issue_lifecycle(state, output, sender, "run", id);
-                    }
-                    ui.same_line();
-                }
-                if loaded.is_some() && ui.button("Unload") {
-                    issue_lifecycle(state, output, sender, "unload", id);
-                }
+                ui.same_line();
+            }
+            if loaded.is_some() && ui.button("Unload") {
+                issue_lifecycle(state, output, sender, "unload", id);
             }
         }
     }
@@ -403,16 +399,15 @@ pub(super) fn draw_scripts_tab_contents(
         if let Some(clicked_script) = clicked_script {
             state.selected_script = Some(clicked_script);
         }
-        if let Some(selected) = state.selected_script.clone() {
-            if state
+        if let Some(selected) = state.selected_script.clone()
+            && state
                 .loaded_scripts
                 .iter()
                 .any(|item| item.id == selected.id)
-            {
-                ui.same_line();
-                if ui.button(format!("Unload {}", selected.id.as_str())) {
-                    issue_lifecycle(state, output, sender, "unload", &selected.id);
-                }
+        {
+            ui.same_line();
+            if ui.button(format!("Unload {}", selected.id.as_str())) {
+                issue_lifecycle(state, output, sender, "unload", &selected.id);
             }
         }
     }

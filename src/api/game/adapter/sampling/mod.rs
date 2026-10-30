@@ -29,7 +29,7 @@ pub(super) fn current_game_snapshot(thread_id: u32) -> GameSnapshot {
     let latest_sample_at = player.sampled_at.max(vehicle.sampled_at);
     let sample_age_seconds = latest_sample_at.map(|sampled_at| sampled_at.elapsed().as_secs_f32());
 
-    GameSnapshot {
+    let mut snapshot = GameSnapshot {
         callback_sequence: UPDATE_POST_SIM_CALLS.load(Ordering::Acquire),
         camera_raycast_hook_installed: CAMERA_RAYCAST_HOOK_INSTALLED.load(Ordering::Acquire),
         camera_raycast_calls: CAMERA_RAYCAST_CALLS.load(Ordering::Acquire),
@@ -49,79 +49,76 @@ pub(super) fn current_game_snapshot(thread_id: u32) -> GameSnapshot {
         callback_thread_mismatch_count: CALLBACK_THREAD_MISMATCHES.load(Ordering::Acquire),
         callback_gate_open: CALLBACK_GATE_OPEN.load(Ordering::Acquire),
         callback_panics: CALLBACK_RUNTIME_PANICS.load(Ordering::Acquire),
-        player_position: (!player_stale).then_some(player.position).flatten(),
-        player_forward: (!player_stale).then_some(player.forward).flatten(),
-        player_transform: (!player_stale).then_some(player.transform).flatten(),
-        player_rotation: (!player_stale).then_some(player.rotation).flatten(),
-        view_rotation: (!player_stale).then_some(player.view_rotation).flatten(),
-        reticle_ray_origin: (!player_stale)
-            .then_some(player.reticle_ray_origin)
-            .flatten(),
-        reticle_ray_direction: (!player_stale)
-            .then_some(player.reticle_ray_direction)
-            .flatten(),
-        reticle_query_available: !player_stale && player.reticle_query_available,
-        reticle_query_state_present: !player_stale && player.reticle_query_state_present,
-        reticle_hit_fraction: (!player_stale)
-            .then_some(player.reticle_hit_fraction)
-            .flatten(),
-        reticle_candidate_position: (!player_stale)
-            .then_some(player.reticle_candidate_position)
-            .flatten(),
-        reticle_candidate_shape: (!player_stale)
-            .then_some(player.reticle_candidate_shape)
-            .flatten(),
-        player_aim_query_available: !player_stale && player.player_aim_query_available,
-        player_aim_query_state_present: !player_stale && player.player_aim_query_state_present,
-        player_aim_hit_fraction: (!player_stale)
-            .then_some(player.player_aim_hit_fraction)
-            .flatten(),
-        player_aim_candidate_position: (!player_stale)
-            .then_some(player.player_aim_candidate_position)
-            .flatten(),
-        player_aim_candidate_shape: (!player_stale)
-            .then_some(player.player_aim_candidate_shape)
-            .flatten(),
-        ignore_characters_vehicles_query_available: !player_stale
-            && player.ignore_characters_vehicles_query_available,
-        ignore_characters_vehicles_query_state_present: !player_stale
-            && player.ignore_characters_vehicles_query_state_present,
-        ignore_characters_vehicles_hit_fraction: (!player_stale)
-            .then_some(player.ignore_characters_vehicles_hit_fraction)
-            .flatten(),
-        ignore_characters_vehicles_candidate_position: (!player_stale)
-            .then_some(player.ignore_characters_vehicles_candidate_position)
-            .flatten(),
-        ignore_characters_vehicles_candidate_shape: (!player_stale)
-            .then_some(player.ignore_characters_vehicles_candidate_shape)
-            .flatten(),
-        ignore_player_owner_query_available: !player_stale
-            && player.ignore_player_owner_query_available,
-        ignore_player_owner_query_state_present: !player_stale
-            && player.ignore_player_owner_query_state_present,
-        ignore_player_owner_hit_fraction: (!player_stale)
-            .then_some(player.ignore_player_owner_fraction)
-            .flatten(),
-        ignore_player_owner_candidate_position: (!player_stale)
-            .then_some(player.ignore_player_owner_candidate_position)
-            .flatten(),
-        ignore_player_owner_candidate_shape: (!player_stale)
-            .then_some(player.ignore_player_owner_candidate_shape)
-            .flatten(),
-        player_velocity: (!player_stale).then_some(player.velocity).flatten(),
-        player_acceleration: (!player_stale).then_some(player.acceleration).flatten(),
-        vehicle_position: vehicle_fresh.then_some(vehicle.position).flatten(),
-        vehicle_transform: vehicle_fresh.then_some(vehicle.transform).flatten(),
-        vehicle_forward: vehicle_fresh.then_some(vehicle.forward).flatten(),
-        vehicle_rotation: vehicle_fresh.then_some(vehicle.rotation).flatten(),
-        vehicle_velocity: vehicle_fresh.then_some(vehicle.velocity).flatten(),
-        vehicle_acceleration: vehicle_fresh.then_some(vehicle.acceleration).flatten(),
-        vehicle_angular_velocity: vehicle_fresh.then_some(vehicle.angular_velocity).flatten(),
-        vehicle_velocity_last_frame: vehicle_fresh
-            .then_some(vehicle.velocity_last_frame)
-            .flatten(),
         ..GameSnapshot::default()
-    }
+    };
+    copy_player_snapshot(&mut snapshot, &player, player_stale);
+    copy_vehicle_snapshot(&mut snapshot, &vehicle, vehicle_fresh);
+    snapshot
+}
+
+fn copy_player_snapshot(snapshot: &mut GameSnapshot, player: &PlayerSampleState, stale: bool) {
+    snapshot.player_position = (!stale).then_some(player.position).flatten();
+    snapshot.player_forward = (!stale).then_some(player.forward).flatten();
+    snapshot.player_transform = (!stale).then_some(player.transform).flatten();
+    snapshot.player_rotation = (!stale).then_some(player.rotation).flatten();
+    snapshot.view_rotation = (!stale).then_some(player.view_rotation).flatten();
+    snapshot.reticle_ray_origin = (!stale).then_some(player.reticle_ray_origin).flatten();
+    snapshot.reticle_ray_direction = (!stale).then_some(player.reticle_ray_direction).flatten();
+    snapshot.reticle_query_available = !stale && player.reticle_query_available;
+    snapshot.reticle_query_state_present = !stale && player.reticle_query_state_present;
+    snapshot.reticle_hit_fraction = (!stale).then_some(player.reticle_hit_fraction).flatten();
+    snapshot.reticle_candidate_position = (!stale)
+        .then_some(player.reticle_candidate_position)
+        .flatten();
+    snapshot.reticle_candidate_shape = (!stale).then_some(player.reticle_candidate_shape).flatten();
+    snapshot.player_aim_query_available = !stale && player.player_aim_query_available;
+    snapshot.player_aim_query_state_present = !stale && player.player_aim_query_state_present;
+    snapshot.player_aim_hit_fraction = (!stale).then_some(player.player_aim_hit_fraction).flatten();
+    snapshot.player_aim_candidate_position = (!stale)
+        .then_some(player.player_aim_candidate_position)
+        .flatten();
+    snapshot.player_aim_candidate_shape = (!stale)
+        .then_some(player.player_aim_candidate_shape)
+        .flatten();
+    snapshot.ignore_characters_vehicles_query_available =
+        !stale && player.ignore_characters_vehicles_query_available;
+    snapshot.ignore_characters_vehicles_query_state_present =
+        !stale && player.ignore_characters_vehicles_query_state_present;
+    snapshot.ignore_characters_vehicles_hit_fraction = (!stale)
+        .then_some(player.ignore_characters_vehicles_hit_fraction)
+        .flatten();
+    snapshot.ignore_characters_vehicles_candidate_position = (!stale)
+        .then_some(player.ignore_characters_vehicles_candidate_position)
+        .flatten();
+    snapshot.ignore_characters_vehicles_candidate_shape = (!stale)
+        .then_some(player.ignore_characters_vehicles_candidate_shape)
+        .flatten();
+    snapshot.ignore_player_owner_query_available =
+        !stale && player.ignore_player_owner_query_available;
+    snapshot.ignore_player_owner_query_state_present =
+        !stale && player.ignore_player_owner_query_state_present;
+    snapshot.ignore_player_owner_hit_fraction = (!stale)
+        .then_some(player.ignore_player_owner_fraction)
+        .flatten();
+    snapshot.ignore_player_owner_candidate_position = (!stale)
+        .then_some(player.ignore_player_owner_candidate_position)
+        .flatten();
+    snapshot.ignore_player_owner_candidate_shape = (!stale)
+        .then_some(player.ignore_player_owner_candidate_shape)
+        .flatten();
+    snapshot.player_velocity = (!stale).then_some(player.velocity).flatten();
+    snapshot.player_acceleration = (!stale).then_some(player.acceleration).flatten();
+}
+
+fn copy_vehicle_snapshot(snapshot: &mut GameSnapshot, vehicle: &VehicleSampleState, fresh: bool) {
+    snapshot.vehicle_position = fresh.then_some(vehicle.position).flatten();
+    snapshot.vehicle_transform = fresh.then_some(vehicle.transform).flatten();
+    snapshot.vehicle_forward = fresh.then_some(vehicle.forward).flatten();
+    snapshot.vehicle_rotation = fresh.then_some(vehicle.rotation).flatten();
+    snapshot.vehicle_velocity = fresh.then_some(vehicle.velocity).flatten();
+    snapshot.vehicle_acceleration = fresh.then_some(vehicle.acceleration).flatten();
+    snapshot.vehicle_angular_velocity = fresh.then_some(vehicle.angular_velocity).flatten();
+    snapshot.vehicle_velocity_last_frame = fresh.then_some(vehicle.velocity_last_frame).flatten();
 }
 
 pub(super) fn probe_game_state() {

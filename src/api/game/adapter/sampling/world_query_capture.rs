@@ -625,22 +625,23 @@ pub(in crate::api::game::adapter) unsafe extern "system" fn native_world_query_g
         Some((candidate_sample, ray_info, candidate_info))
     });
     let result_pointer = unsafe { original(filter, output, ray, candidate) };
-    if let Some((candidate_sample, ray_info, candidate_info)) = capture {
-        if !result_pointer.is_null() && readable_span(result_pointer as usize, size_of::<u8>()) {
-            candidate_sample
-                .group_filter_ray_info
-                .store(ray_info, Ordering::Relaxed);
-            candidate_sample
-                .group_filter_candidate_info
-                .store(candidate_info, Ordering::Relaxed);
-            candidate_sample.group_filter_result.store(
-                unsafe { ptr::read_unaligned(result_pointer) },
-                Ordering::Relaxed,
-            );
-            candidate_sample
-                .group_filter_result_valid
-                .store(true, Ordering::Release);
-        }
+    if let Some((candidate_sample, ray_info, candidate_info)) = capture
+        && !result_pointer.is_null()
+        && readable_span(result_pointer as usize, size_of::<u8>())
+    {
+        candidate_sample
+            .group_filter_ray_info
+            .store(ray_info, Ordering::Relaxed);
+        candidate_sample
+            .group_filter_candidate_info
+            .store(candidate_info, Ordering::Relaxed);
+        candidate_sample.group_filter_result.store(
+            unsafe { ptr::read_unaligned(result_pointer) },
+            Ordering::Relaxed,
+        );
+        candidate_sample
+            .group_filter_result_valid
+            .store(true, Ordering::Release);
     }
     result_pointer
 }

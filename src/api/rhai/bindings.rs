@@ -346,6 +346,14 @@ impl GamePostSimContext {
 }
 pub(crate) fn register_v1(engine: &mut Engine) {
     ScriptMath::register(engine);
+    register_context_properties(engine);
+    register_basic_debug_draw(engine);
+    register_bounds_debug_draw(engine);
+    register_value_helpers(engine);
+    register_copied_object_properties(engine);
+}
+
+fn register_context_properties(engine: &mut Engine) {
     engine
         .register_type_with_name::<GamePostSimContext>("MadMaxPostSimContext")
         .register_type_with_name::<CopiedObject>("MadMaxCopiedObject")
@@ -376,7 +384,11 @@ pub(crate) fn register_v1(engine: &mut Engine) {
             Ok::<_, Box<rhai::EvalAltResult>>(ctx.debug.clone())
         })
         .register_get("format", |_ctx: &mut GamePostSimContext| ScriptFormatter)
-        .register_fn("info", InvocationLog::info)
+        .register_fn("info", InvocationLog::info);
+}
+
+fn register_basic_debug_draw(engine: &mut Engine) {
+    engine
         .register_fn(
             "axes",
             |draw: &mut InvocationDebugDraw, position: Map, length: rhai::FLOAT| {
@@ -420,7 +432,11 @@ pub(crate) fn register_v1(engine: &mut Engine) {
         .register_fn(
             "aabb",
             |d: &mut InvocationDebugDraw, min: Map, max: Map, color: Map| d.aabb(min, max, color),
-        )
+        );
+}
+
+fn register_bounds_debug_draw(engine: &mut Engine) {
+    engine
         .register_fn(
             "transformed_aabb",
             |d: &mut InvocationDebugDraw, transform: Array, min: Map, max: Map, color: Map| {
@@ -456,7 +472,11 @@ pub(crate) fn register_v1(engine: &mut Engine) {
             |d: &mut InvocationDebugDraw, transform: Array, min: Map, max: Map, color: Map| {
                 d.bounds_shape(5, transform, min, max, color)
             },
-        )
+        );
+}
+
+fn register_value_helpers(engine: &mut Engine) {
+    engine
         .register_fn("fixed", ScriptFormatter::fixed)
         .register_fn("vector", ScriptFormatter::vector)
         .register_fn("down", |input: &mut CopiedInput, key: &str| {
@@ -474,6 +494,9 @@ pub(crate) fn register_v1(engine: &mut Engine) {
             })?;
             write.set_velocity(value)
         });
+}
+
+fn register_copied_object_properties(engine: &mut Engine) {
     for name in [
         "available",
         "position",
@@ -499,8 +522,12 @@ fn require_capability(allowed: bool, id: &str) -> Result<(), Box<rhai::EvalAltRe
 
 #[cfg(test)]
 mod math_integration_tests {
+    use super::{GamePostSimContext, InvocationDebugDraw, InvocationLog, InvocationVehicleWrite};
+    use crate::api::ecs::GameSnapshot;
+    use crate::api::game::abi::types::Matrix4x4;
     use crate::api::scripts::engine::RhaiEngineFactory;
     use crate::api::scripts::*;
+    use rhai::{Array, Map};
 
     #[test]
     fn ctx_math_is_pure_and_preserves_negative_z_forward() {
@@ -616,8 +643,14 @@ mod math_integration_tests {
 
 #[cfg(test)]
 mod debug_draw_tests {
+    use super::{
+        DebugPrimitive, GamePostSimContext, InvocationDebugDraw, InvocationLog,
+        InvocationVehicleWrite, register_v1,
+    };
+    use crate::api::ecs::GameSnapshot;
     use crate::api::game::abi::types::Matrix4x4;
     use crate::api::scripts::*;
+    use rhai::{Dynamic, Engine, Map};
 
     #[test]
     fn debug_line_is_available_only_during_its_bounded_invocation() {

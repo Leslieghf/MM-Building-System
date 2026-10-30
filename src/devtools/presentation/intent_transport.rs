@@ -5,6 +5,11 @@ use super::*;
 /// Full queues leave the entities in the UI world to retry on a later render.
 pub(crate) fn flush_ui_intents(app: &mut App, endpoint: &UiEndpoint) {
     let world = app.world_mut();
+    flush_velocity_intents(world, endpoint);
+    flush_spawn_intents(world, endpoint);
+}
+
+fn flush_velocity_intents(world: &mut bevy_ecs::world::World, endpoint: &UiEndpoint) {
     let mut pending: Vec<_> = {
         let mut query = world.query_filtered::<
             (Entity, &IntentId, &SetPlayerVehicleVelocity),
@@ -39,7 +44,9 @@ pub(crate) fn flush_ui_intents(app: &mut App, endpoint: &UiEndpoint) {
             Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break,
         }
     }
+}
 
+fn flush_spawn_intents(world: &mut bevy_ecs::world::World, endpoint: &UiEndpoint) {
     let mut pending_spawns: Vec<_> = {
         let mut query = world.query_filtered::<
             (Entity, &SpawnRequestId, &SpawnAssetKey, &SpawnTransform),

@@ -13,10 +13,10 @@ pub(crate) fn append_log(message: &str) {
         .join("MadMaxModding")
         .join("logs")
         .join("bootstrap.log");
-    if let Some(parent) = log_path.parent() {
-        if fs::create_dir_all(parent).is_err() {
-            return;
-        }
+    if let Some(parent) = log_path.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        return;
     }
     let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) else {
         return;

@@ -188,10 +188,10 @@ pub(in crate::api::game::adapter) fn sample_reticle_ray_if_due(
     sample.candidate_shape = read_query_candidate_shape(&context);
     if output.scalar_14.is_finite() && (0.0..=1.0).contains(&output.scalar_14) {
         sample.fraction = Some(output.scalar_14);
-        if output.scalar_14 < 1.0 {
-            if let Some(point) = ray.point_at(RETICLE_RAY_MAX_DISTANCE * output.scalar_14) {
-                sample.candidate_position = Some([point.x, point.y, point.z]);
-            }
+        if output.scalar_14 < 1.0
+            && let Some(point) = ray.point_at(RETICLE_RAY_MAX_DISTANCE * output.scalar_14)
+        {
+            sample.candidate_position = Some([point.x, point.y, point.z]);
         }
     }
 
@@ -245,12 +245,11 @@ pub(in crate::api::game::adapter) fn sample_reticle_ray_if_due(
             && (0.0..=1.0).contains(&player_aim_output.scalar_14)
         {
             sample.player_aim_fraction = Some(player_aim_output.scalar_14);
-            if player_aim_output.scalar_14 < 1.0 {
-                if let Some(point) =
+            if player_aim_output.scalar_14 < 1.0
+                && let Some(point) =
                     ray.point_at(RETICLE_RAY_MAX_DISTANCE * player_aim_output.scalar_14)
-                {
-                    sample.player_aim_candidate_position = Some([point.x, point.y, point.z]);
-                }
+            {
+                sample.player_aim_candidate_position = Some([point.x, point.y, point.z]);
             }
         }
     }
@@ -310,13 +309,13 @@ pub(in crate::api::game::adapter) fn sample_reticle_ray_if_due(
         {
             sample.ignore_characters_vehicles_fraction =
                 Some(ignore_characters_vehicles_output.scalar_14);
-            if ignore_characters_vehicles_output.scalar_14 < 1.0 {
-                if let Some(point) = ray.point_at(
+            if ignore_characters_vehicles_output.scalar_14 < 1.0
+                && let Some(point) = ray.point_at(
                     RETICLE_RAY_MAX_DISTANCE * ignore_characters_vehicles_output.scalar_14,
-                ) {
-                    sample.ignore_characters_vehicles_candidate_position =
-                        Some([point.x, point.y, point.z]);
-                }
+                )
+            {
+                sample.ignore_characters_vehicles_candidate_position =
+                    Some([point.x, point.y, point.z]);
             }
         }
     }
@@ -402,13 +401,12 @@ pub(in crate::api::game::adapter) fn sample_reticle_ray_if_due(
                 && (0.0..=1.0).contains(&ignore_player_output.scalar_14)
             {
                 sample.ignore_player_owner_fraction = Some(ignore_player_output.scalar_14);
-                if ignore_player_output.scalar_14 < 1.0 {
-                    if let Some(point) =
+                if ignore_player_output.scalar_14 < 1.0
+                    && let Some(point) =
                         ray.point_at(RETICLE_RAY_MAX_DISTANCE * ignore_player_output.scalar_14)
-                    {
-                        sample.ignore_player_owner_candidate_position =
-                            Some([point.x, point.y, point.z]);
-                    }
+                {
+                    sample.ignore_player_owner_candidate_position =
+                        Some([point.x, point.y, point.z]);
                 }
             }
         }
