@@ -34,7 +34,11 @@ api/
     abi/                    version-specific declarations and layouts
     adapter/
       hooks/                hook installation and callback entry
-      sampling/             native reads copied into owned telemetry
+      sampling/
+        actors.rs           player and vehicle telemetry
+        camera.rs           camera, reticle ray, and candidate shape
+        effects.rs          validated velocity and spawn application
+        telemetry.rs        owned sample slots and freshness metadata
   ecs/
     channels.rs             bounded cross-callback transport
     frame.rs                owned game snapshot
