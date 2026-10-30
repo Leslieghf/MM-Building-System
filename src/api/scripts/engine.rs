@@ -11,11 +11,14 @@ pub const MAX_MAP_ITEMS: usize = 128;
 pub const MAX_FUNCTIONS: usize = 64;
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024;
 #[derive(Debug, Clone, Copy, Default)]
+/// Factory for the host's constrained Rhai engine configuration.
 pub struct RhaiEngineFactory;
 impl RhaiEngineFactory {
+    /// Create an engine with the package limits and API v1 bindings installed.
     pub fn create(self) -> Engine {
         Self::build()
     }
+    /// Create an engine with the package limits and API v1 bindings installed.
     pub fn build() -> Engine {
         let mut engine = Engine::new();
         engine

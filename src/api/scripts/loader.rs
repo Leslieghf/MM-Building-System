@@ -18,36 +18,57 @@ use std::{
     time::Duration,
 };
 
+/// Capacity of each bounded loader request and result queue.
 pub const LOADER_QUEUE_CAPACITY: usize = 8;
+/// Maximum package rows returned by one directory scan.
 pub const MAX_DISCOVERED_PACKAGES: usize = 64;
+/// Maximum child directories examined during package discovery.
 pub const MAX_SCANNED_DIRECTORIES: usize = 512;
+/// Maximum UTF-8 bytes retained for one package directory name.
 pub const MAX_PACKAGE_NAME_BYTES: usize = 128;
+/// Maximum UTF-8 bytes accepted for a package discovery root path.
 pub const MAX_DISCOVERY_ROOT_BYTES: usize = 512;
 #[derive(Debug, Clone)]
+/// Request to compile a package on the worker thread.
 pub struct LoadScriptRequest {
+    /// Caller-supplied identifier used for status correlation.
     pub request_id: u64,
+    /// Package to compile.
     pub id: ScriptId,
+    /// Whether this result may replace an active generation.
     pub replace: bool,
     pub(crate) snapshot: Option<super::auto_reload::AutoReloadSnapshot>,
 }
 #[derive(Debug)]
+/// Package compilation failure returned by the worker.
 pub struct ScriptLoadFailure {
+    /// Identifier copied from the load request.
     pub request_id: u64,
+    /// Package that failed compilation or validation.
     pub id: ScriptId,
+    /// Human-readable error text.
     pub message: String,
 }
+/// Compiled package payload or its worker-reported failure.
 pub type ScriptLoadResult = Result<PreparedScript, ScriptLoadFailure>;
 
 #[derive(Debug, Clone, Copy)]
+/// Request to scan packages without compiling their source.
 pub struct DiscoverScriptsRequest {
+    /// Optional caller-supplied identifier for result correlation.
     pub request_id: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
+/// Owned result of one package-directory scan.
 pub struct ScriptDiscoveryResult {
+    /// Identifier copied from the request.
     pub request_id: Option<u64>,
+    /// Display form of the scanned root path.
     pub root: String,
+    /// Discovered packages, including invalid rows with their issue text.
     pub packages: Vec<DiscoveredScript>,
+    /// Root-level error when the scan could not complete.
     pub error: Option<String>,
 }
 
@@ -165,6 +186,8 @@ fn resolve_script_root(root: Option<PathBuf>) -> Result<PathBuf, String> {
 }
 
 /// The worker owns all filesystem access and compilation. Drop never joins it.
+///
+/// Request methods are non-blocking; full queues are reported to the caller.
 pub struct ScriptLoader {
     requests: SyncSender<LoaderRequest>,
     results: Receiver<ScriptLoadResult>,
@@ -183,6 +206,11 @@ pub struct ScriptDiscoveryRequester {
     stopped: Arc<AtomicBool>,
 }
 impl ScriptDiscoveryRequester {
+    /// Submit a package scan request without blocking the calling thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the worker has stopped or the bounded queue is full.
     pub fn try_discover(&self, request: DiscoverScriptsRequest) -> Result<(), &'static str> {
         if self.stopped.load(Ordering::Acquire) {
             return Err("script loader unavailable");
@@ -196,10 +224,13 @@ impl ScriptDiscoveryRequester {
     }
 }
 impl ScriptLoader {
+    /// Start a worker using the supplied package root.
     pub fn start(root: PathBuf, engine_factory: RhaiEngineFactory) -> Self {
         Self::start_worker(Some(root), engine_factory)
     }
-    /// Resolve the executable directory on the worker, never a host callback.
+    /// Start the worker at `MadMaxModding/scripts` beside the executable.
+    ///
+    /// The executable path is resolved on the worker thread.
     pub fn start_for_game(engine_factory: RhaiEngineFactory) -> Self {
         Self::start_worker(None, engine_factory)
     }
@@ -248,6 +279,11 @@ impl ScriptLoader {
             stopped,
         }
     }
+    /// Submit a bounded package compilation request without blocking.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the worker stopped or the request queue is full.
     pub fn try_request(&self, request: LoadScriptRequest) -> Result<(), &'static str> {
         if self.stopped.load(Ordering::Acquire) {
             return Err("script loader unavailable");
@@ -259,9 +295,11 @@ impl ScriptLoader {
                 TrySendError::Disconnected(_) => "script loader unavailable",
             })
     }
+    /// Take one completed compilation result, if available.
     pub fn try_result(&self) -> Option<ScriptLoadResult> {
         self.results.try_recv().ok()
     }
+    /// Enable or disable file-change watching for one package.
     pub fn set_auto_reload(&self, id: ScriptId, enabled: bool) -> Result<(), &'static str> {
         if self.stopped.load(Ordering::Acquire) {
             return Err("script loader unavailable");
@@ -274,6 +312,7 @@ impl ScriptLoader {
             })
     }
     /// Drain at most one request; cancelled notices are bounded by channel capacity.
+    /// Take one queued file-change reload request, if available.
     pub fn try_auto_reload(&self) -> Option<LoadScriptRequest> {
         for _ in 0..LOADER_QUEUE_CAPACITY {
             let notice = self.auto_reload.try_recv().ok()?;
@@ -286,6 +325,7 @@ impl ScriptLoader {
     }
     /// Coalesced saturation markers, bounded by the maximum loaded script count.
     /// Each pending notice reports at most once, even if retries keep finding Full.
+    /// Take package IDs whose file-change notices overflowed the queue.
     pub fn take_auto_reload_overflow(&self) -> Vec<ScriptId> {
         let mut ids = BTreeSet::new();
         for _ in 0..super::manager::MAX_ACTIVE_SCRIPTS {
@@ -298,22 +338,27 @@ impl ScriptLoader {
         }
         ids.into_iter().collect()
     }
+    /// Submit a bounded package discovery request without blocking.
     pub fn try_discover(&self, request: DiscoverScriptsRequest) -> Result<(), &'static str> {
         self.discovery_requester().try_discover(request)
     }
+    /// Create a cloneable discovery-only request handle.
     pub fn discovery_requester(&self) -> ScriptDiscoveryRequester {
         ScriptDiscoveryRequester {
             requests: self.requests.clone(),
             stopped: self.stopped.clone(),
         }
     }
+    /// Take one completed directory scan, if available.
     pub fn try_discovery_result(&self) -> Option<ScriptDiscoveryResult> {
         self.discovery_results.try_recv().ok()
     }
     /// Retained overload state survives a full event/result queue for the next drain.
+    /// Take and reset the number of compilation results dropped due to overflow.
     pub fn take_overflow(&self) -> usize {
         self.overflow.swap(0, Ordering::Relaxed)
     }
+    /// Take and reset the number of discovery results dropped due to overflow.
     pub fn take_discovery_overflow(&self) -> usize {
         self.discovery_overflow.swap(0, Ordering::Relaxed)
     }

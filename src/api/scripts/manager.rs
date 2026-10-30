@@ -9,14 +9,23 @@ use bevy_ecs::prelude::Resource;
 use rhai::{AST, CallFnOptions, Dynamic, Engine, Map, Scope};
 use std::collections::{BTreeMap, VecDeque};
 
+/// Maximum number of simultaneously loaded package generations.
 pub const MAX_ACTIVE_SCRIPTS: usize = 16;
+/// Maximum queued lifecycle changes awaiting a callback boundary.
 pub const MAX_PENDING_CHANGES: usize = 32;
+/// Maximum manually queued `on_run` callbacks per phase.
 pub const MAX_RUNS_PER_PHASE: usize = 16;
+/// Maximum total callbacks invoked in one phase.
 pub const MAX_CALLBACKS_PER_PHASE: usize = MAX_ACTIVE_SCRIPTS + MAX_RUNS_PER_PHASE;
+/// Maximum vehicle velocity effects accepted per phase.
 pub const MAX_VELOCITY_EFFECTS_PER_PHASE: usize = 32;
+/// Maximum debug primitives accepted from one callback.
 pub const MAX_DEBUG_DRAWS_PER_INVOCATION: usize = 32;
+/// Maximum debug primitives accepted in one phase.
 pub const MAX_DEBUG_DRAWS_PER_PHASE: usize = 128;
+/// Maximum estimated geometry work accepted from one callback.
 pub const MAX_DEBUG_DRAW_WORK_PER_INVOCATION: usize = 256;
+/// Maximum estimated geometry work accepted in one phase.
 pub const MAX_DEBUG_DRAW_WORK_PER_PHASE: usize = 512;
 /// Limit outstanding effects too: the native adapter drains one intent per callback.
 pub const MAX_PENDING_VELOCITY_EFFECTS: usize = 32;
@@ -28,7 +37,9 @@ pub(crate) struct ScriptDebugDrawEffect {
     pub primitive: DebugPrimitive,
     pub origin: ScriptEvent,
 }
+/// Maximum top-level values retained in a script's persistent state map.
 pub const MAX_STATE_VALUES: usize = 1024;
+/// Maximum nested state container depth.
 pub const MAX_STATE_DEPTH: usize = 16;
 
 pub use super::package::PreparedScript;
@@ -51,13 +62,21 @@ enum PendingChange {
     Run(ScriptId, Option<u64>),
 }
 #[derive(Debug, Clone)]
+/// Snapshot of one active package generation for UI and status reporting.
 pub struct ScriptListing {
+    /// Package identifier.
     pub id: ScriptId,
+    /// Active generation number.
     pub generation: ScriptGeneration,
+    /// Whether callbacks are active, disabled, or unloaded.
     pub status: ScriptStatus,
+    /// Callback functions registered by phase.
     pub callbacks: BTreeMap<ScriptPhaseId, String>,
+    /// Whether a manual `on_run` callback is registered.
     pub has_on_run: bool,
+    /// Whether file-change reload is enabled.
     pub auto_reload: bool,
+    /// Latest reload failure, if any.
     pub reload_error: Option<String>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +109,7 @@ impl Default for ScriptManager {
     }
 }
 impl ScriptManager {
+    /// Create a script manager publishing lifecycle and callback events to `events`.
     pub fn new(events: ScriptEventSink) -> Self {
         Self {
             engine: RhaiEngineFactory::build(),
@@ -119,13 +139,20 @@ impl ScriptManager {
         self.pending.push_back(change);
         Ok(())
     }
+    /// Queue a validated package for activation at the next change boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bounded lifecycle queue is full.
     pub fn stage_prepared(&mut self, prepared: PreparedScript) -> Result<(), String> {
         self.stage(PendingChange::Install(prepared, false))
             .map_err(str::to_owned)
     }
+    /// Queue package unload without an external request identifier.
     pub fn stage_unload(&mut self, id: ScriptId) -> Result<(), &'static str> {
         self.stage_unload_request(id, None)
     }
+    /// Queue package unload and correlate its status event with a request.
     pub fn stage_unload_request(
         &mut self,
         id: ScriptId,
@@ -138,9 +165,11 @@ impl ScriptManager {
         }
         Ok(())
     }
+    /// Queue one manual `on_run` invocation.
     pub fn stage_run(&mut self, id: ScriptId) -> Result<(), &'static str> {
         self.stage_run_request(id, None)
     }
+    /// Queue one manual `on_run` invocation with request correlation.
     pub fn stage_run_request(
         &mut self,
         id: ScriptId,
@@ -148,6 +177,7 @@ impl ScriptManager {
     ) -> Result<(), &'static str> {
         self.stage(PendingChange::Run(id, request_id))
     }
+    /// Enable or disable file-change reload for an active package.
     pub fn set_auto_reload(
         &mut self,
         id: &ScriptId,
@@ -156,6 +186,7 @@ impl ScriptManager {
     ) -> Result<(), &'static str> {
         self.set_auto_reload_request(id, enabled, loader, None)
     }
+    /// Set file-change reload and correlate any status event with a request.
     pub fn set_auto_reload_request(
         &mut self,
         id: &ScriptId,
@@ -196,6 +227,7 @@ impl ScriptManager {
         );
         Ok(())
     }
+    /// Disable file watching and queue unload through the worker-backed loader.
     pub fn request_unload(
         &mut self,
         loader: &super::loader::ScriptLoader,
@@ -224,6 +256,7 @@ impl ScriptManager {
         }
     }
     /// Manual intent wins over automatic work, including prepared generations.
+    /// Submit a package load or replacement to the worker-backed loader.
     pub fn request_load(
         &mut self,
         loader: &super::loader::ScriptLoader,
@@ -231,6 +264,7 @@ impl ScriptManager {
     ) -> Result<(), String> {
         self.request_load_with_origin(loader, request, LoadOrigin::Manual)
     }
+    /// Submit a file-change replacement while retaining generation ordering.
     pub fn request_auto_reload(
         &mut self,
         loader: &super::loader::ScriptLoader,
@@ -260,6 +294,7 @@ impl ScriptManager {
         }
         self.request_load_with_origin(loader, request, LoadOrigin::Automatic)
     }
+    /// Submit deferred file-change notices when lifecycle capacity is available.
     pub fn process_deferred_auto_reloads(&mut self, loader: &super::loader::ScriptLoader) {
         // One retained notice per loaded script, never a second automatic preparation.
         let ready: Vec<_> = self
@@ -325,6 +360,7 @@ impl ScriptManager {
             }
         }
     }
+    /// Stage a worker result for activation or report its load failure.
     pub fn receive_load_result(&mut self, result: super::loader::ScriptLoadResult) {
         let (id, request_id) = match &result {
             Ok(prepared) => (
@@ -362,6 +398,7 @@ impl ScriptManager {
         }
         self.report_failure(id, request_id, text);
     }
+    /// Report that a file-change notice was dropped for a package.
     pub fn report_auto_reload_overflow(&mut self, id: ScriptId) {
         if self
             .active
@@ -375,6 +412,7 @@ impl ScriptManager {
             );
         }
     }
+    /// Report the number of worker results dropped due to a full result queue.
     pub fn report_loader_overflow(&mut self, dropped: usize) {
         if dropped == 0 {
             return;
@@ -410,6 +448,7 @@ impl ScriptManager {
             text: text.to_owned(),
         });
     }
+    /// Return owned status rows for active and disabled packages.
     pub fn list(&self) -> Vec<ScriptListing> {
         self.active
             .iter()
@@ -424,12 +463,14 @@ impl ScriptManager {
             })
             .collect()
     }
+    /// Return package IDs and request IDs for loads still in flight.
     pub fn pending_loads(&self) -> Vec<(ScriptId, u64)> {
         self.load_requests
             .iter()
             .map(|(id, request)| (id.clone(), request.request_id))
             .collect()
     }
+    /// Apply queued install, unload, and run changes at the callback boundary.
     pub fn apply_pending_changes(&mut self) {
         for _ in 0..MAX_PENDING_CHANGES {
             let Some(change) = self.pending.pop_front() else {

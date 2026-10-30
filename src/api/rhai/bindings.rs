@@ -15,11 +15,15 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
+/// Runtime API version and descriptor catalog used by package validation.
 pub struct ScriptApiRegistry {
+    /// Callback signatures, values, capabilities, and effects for this version.
     pub descriptors: Vec<ScriptApiDescriptor>,
+    /// Capability identifiers accepted by the manifest validator.
     pub capabilities: &'static [&'static str],
 }
 impl ScriptApiRegistry {
+    /// Build the API v1 descriptor registry used by the current host.
     pub fn v1() -> Self {
         Self {
             capabilities: API_CAPABILITIES,
@@ -40,6 +44,9 @@ impl ScriptApiRegistry {
     }
 }
 #[derive(Clone)]
+/// Rhai callback context containing copied frame data and bounded helpers.
+///
+/// Scripts access its registered Rhai properties; Rust fields are private.
 pub struct GamePostSimContext {
     frame: Map,
     math: ScriptMath,

@@ -4,30 +4,49 @@ use crate::api::scripts::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// User-visible severity for a console event.
 pub enum ConsoleSeverity {
+    /// Informational output.
     Info,
+    /// Non-fatal issue or recovery notice.
     Warning,
+    /// Command, validation, compile, or callback failure.
     Error,
 }
 #[derive(Debug, Clone, Copy)]
+/// Optional one-based source location reported by Rhai.
 pub struct SourcePosition {
+    /// Source line, when known.
     pub line: Option<usize>,
+    /// Source column, when known.
     pub column: Option<usize>,
 }
 #[derive(Debug, Clone)]
+/// Owned console row with optional script lifecycle metadata.
 pub struct ConsoleEvent {
+    /// Request identifier for matching command output.
     pub request_id: Option<u64>,
+    /// Display severity.
     pub severity: ConsoleSeverity,
+    /// Associated script package, when applicable.
     pub script: Option<ScriptId>,
+    /// Associated loaded generation, when applicable.
     pub generation: Option<ScriptGeneration>,
+    /// Reported script lifecycle state, when applicable.
     pub status: Option<ScriptStatus>,
+    /// File-change reload state when the event reports it.
     pub auto_reload: Option<bool>,
+    /// Latest reload error when reported.
     pub reload_error: Option<String>,
+    /// Script callback phase when applicable.
     pub phase: Option<ScriptPhaseId>,
+    /// Source location when the engine reports one.
     pub source_position: Option<SourcePosition>,
+    /// Bounded display text.
     pub text: String,
 }
 impl ConsoleEvent {
+    /// Create a standalone event, truncating `text` to the host event limit.
     pub fn new(request_id: Option<u64>, severity: ConsoleSeverity, text: &str) -> Self {
         Self {
             request_id,
