@@ -1,5 +1,6 @@
 mod display;
 mod game_probe;
+mod logging;
 mod modding;
 mod overlay;
 mod runtime;

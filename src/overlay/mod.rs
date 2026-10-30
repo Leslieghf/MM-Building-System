@@ -1,4 +1,8 @@
+mod config;
+use config::*;
+
 use crate::game_probe;
+use crate::logging::append_log;
 use crate::runtime::{
     DebugSection, MadMaxRender, OverlayMode, PendingUiInput, RuntimeDiagnostics,
     ScriptConsoleUiState, SpawnTestUiState, UiEndpoint, UiGameSnapshot, UiPreferences,
@@ -14,21 +18,13 @@ use hudhook::windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use hudhook::windows::Win32::UI::WindowsAndMessaging::{WM_ACTIVATEAPP, WM_KILLFOCUS, WM_SETFOCUS};
 use hudhook::{Hudhook, ImguiRenderLoop, MessageFilter, imgui};
 use std::collections::VecDeque;
-use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::panic;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 struct BootstrapNotice;
-// Temporary crash-isolation gate. Keep false until the runtime input path is
-// verified independently from the last known-good startup build.
-const ENABLE_RUNTIME_INPUT_SAMPLING: bool = false;
 
 struct UiRuntime {
     app: App,
@@ -37,10 +33,6 @@ struct UiRuntime {
 
 static UI_ENDPOINT: OnceLock<Mutex<Option<UiEndpoint>>> = OnceLock::new();
 static CLIPBOARD_BACKEND_INITIALIZED: AtomicBool = AtomicBool::new(false);
-
-const CF_UNICODETEXT: u32 = 13;
-const GMEM_MOVEABLE: u32 = 0x0002;
-const MAX_CLIPBOARD_UTF16_UNITS: usize = 262_144;
 
 #[link(name = "user32")]
 unsafe extern "system" {
@@ -1540,29 +1532,6 @@ fn start_overlay() {
         Ok(Err(error)) => append_log(&format!("DirectX 11 render hook failed: {error:?}")),
         Err(_) => append_log("Overlay setup panicked; no game operation was attempted."),
     }
-}
-
-pub(crate) fn append_log(message: &str) {
-    let Some(local_data) = env::var_os("LOCALAPPDATA") else {
-        return;
-    };
-    let log_path = PathBuf::from(local_data)
-        .join("MadMaxModding")
-        .join("logs")
-        .join("bootstrap.log");
-    if let Some(parent) = log_path.parent() {
-        if fs::create_dir_all(parent).is_err() {
-            return;
-        }
-    }
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) else {
-        return;
-    };
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default();
-    let _ = writeln!(file, "Unix time: {seconds}\n{message}");
 }
 
 #[cfg(test)]
