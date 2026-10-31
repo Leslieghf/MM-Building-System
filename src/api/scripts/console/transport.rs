@@ -1,4 +1,9 @@
-//! Bounded nonblocking request and event channels.
+//! Bounded nonblocking channels between UI commands and script lifecycle code.
+//!
+//! Requests travel from the UI to the game callback; owned events travel back
+//! to the UI. Submission and polling never wait for the other thread. A full
+//! request channel returns the unsent request, while event overflow is counted
+//! and surfaced through transport diagnostics.
 use super::command::ConsoleRequest;
 use super::{
     ConsoleCommand, ConsoleEvent, ConsoleSeverity, REQUEST_QUEUE_CAPACITY, next_request_id,

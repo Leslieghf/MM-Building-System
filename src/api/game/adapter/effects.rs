@@ -1,4 +1,10 @@
-//! Validated application of script effects to the live game.
+//! Validation and application of bounded script effects to the live game.
+//!
+//! Effects arrive as owned intents from the ECS runtime. This module checks
+//! executable identity, callback phase, request bounds, and native address
+//! availability before invoking the build-specific implementation. Rejected
+//! requests produce outcomes; no script-held pointer or native object handle
+//! is accepted.
 mod debug_draw;
 use super::*;
 pub(super) use debug_draw::*;

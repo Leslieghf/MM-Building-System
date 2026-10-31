@@ -1,4 +1,8 @@
-//! Retained console prompt, history, package selection, and script status.
+//! Console UI state: prompt, bounded history, package selection, and status.
+//!
+//! This state is presentation-only. Requests are submitted through the bounded
+//! console transport, and status rows are copied from owned lifecycle events;
+//! the model does not own or mutate the script manager.
 use crate::api::scripts::console::{ConsoleOutput, ConsoleSeverity};
 use bevy_ecs::prelude::Resource;
 use std::collections::VecDeque;

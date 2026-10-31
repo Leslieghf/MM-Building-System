@@ -1,4 +1,18 @@
 //! Callback-bound script lifecycle, scheduling, and effect ownership.
+//!
+//! # Lifecycle boundary
+//!
+//! The manager is mutated only while preparing a game callback. Compilation
+//! results and UI lifecycle commands enter through bounded queues and are
+//! applied at that boundary; a loaded package is identified by a generation so
+//! stale results cannot replace a newer request.
+//!
+//! # Effects and state
+//!
+//! Each invocation receives its own Rhai scope and effect collectors. Persistent
+//! state is copied between generations only after depth and value-count
+//! validation. Effects are bounded per invocation and per phase, then exported
+//! as typed intents for the native adapter to validate.
 mod invocation;
 use super::{engine::RhaiEngineFactory, *};
 use crate::api::ecs::GameSnapshot;

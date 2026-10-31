@@ -1,4 +1,12 @@
-//! Compose game access and developer tools from the ASI loader entry point.
+//! Loader-facing entry point and one-time runtime composition.
+//!
+//! # Lifecycle
+//!
+//! [`InitializeASI`] contains panics at the foreign-function boundary and
+//! delegates startup to a named worker thread. The worker creates bounded
+//! endpoints, installs each endpoint with its owning subsystem, then attempts
+//! to install the overlay hook. Game sampling starts only when hook
+//! installation succeeds; this module never calls game functions directly.
 use crate::api::ecs::create_endpoints;
 use crate::api::game::adapter as game_access;
 use crate::devtools::overlay;

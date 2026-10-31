@@ -1,4 +1,12 @@
 //! Pure, finite-checked vector math exposed to Rhai scripts.
+//!
+//! # Semantics
+//!
+//! Inputs must contain finite components. Operations return a Rhai error for
+//! invalid values; normalization and direction return `()` when the vector is
+//! too small to produce a stable unit vector. These helpers do not read game
+//! state and require no capability. Their script-visible names and signatures
+//! are listed in [`super::catalog`].
 use rhai::{Dynamic, Engine, FLOAT, Map};
 
 const COMPONENT_LIMIT: FLOAT = 100_000.0;

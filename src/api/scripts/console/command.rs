@@ -1,4 +1,9 @@
-//! Text command grammar and request identity allocation.
+//! Console command grammar and request identity allocation.
+//!
+//! Parsing converts user text into typed lifecycle requests; it does not
+//! execute scripts. Package identifiers and arguments are validated before a
+//! request is submitted, and request IDs correlate later manager events with
+//! the initiating command.
 use super::MAX_COMMAND_BYTES;
 use crate::api::ecs::input_key::InputKey;
 use crate::api::scripts::ScriptId;

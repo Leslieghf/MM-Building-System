@@ -1,4 +1,9 @@
-//! Owned console event schema and script diagnostic metadata.
+//! Owned console event schema shared by the script manager and UI.
+//!
+//! Events carry bounded text, optional package/generation identity, lifecycle
+//! phase, and source position. They contain no Rhai AST, scope, or native
+//! object. The transport may drop events under pressure, so aggregate drop
+//! counters remain the source for transport-health diagnostics.
 use crate::api::scripts::{
     MAX_EVENT_BYTES, ScriptGeneration, ScriptId, ScriptPhaseId, ScriptStatus, bounded_text,
 };

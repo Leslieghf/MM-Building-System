@@ -1,4 +1,17 @@
-//! UI-side schedule and readout projection.
+//! UI-world schedule, readout projection, and request handoff.
+//!
+//! # Data flow
+//!
+//! The render schedule consumes the latest copied [`crate::api::ecs::GameSnapshot`]
+//! and diagnostics, then stores display-ready rows in `UiPresentation`. It does
+//! not sample the game or dereference native pointers. [`flush_ui_intents`]
+//! forwards bounded UI requests to the game callback; a full queue leaves the
+//! corresponding UI intent available for retry.
+//!
+//! # Ordering
+//!
+//! Registered UI mod systems run before presentation systems. Keep systems
+//! that need to affect the current frame in the mod-system set.
 mod intent_transport;
 use crate::api::ecs::*;
 use crate::api::format::{

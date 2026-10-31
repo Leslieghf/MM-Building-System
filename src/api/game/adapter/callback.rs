@@ -1,4 +1,10 @@
 //! Post-simulation callback orchestration and schedule handoff.
+//!
+//! The installed native callback is the sole entry into game-phase sampling,
+//! ECS execution, and effect draining. Sampling produces an owned snapshot;
+//! the ECS schedule runs against that copy; accepted effects are then passed to
+//! the adapter. The callback contains failures at the native boundary and
+//! skips phases whose build or callback gates are not satisfied.
 use super::*;
 
 pub(super) fn trace_game_runtime_stage(stage: u32, description: &str) {

@@ -1,5 +1,17 @@
 //! Build-specific game adapters, hooks, and copied telemetry.
-//! Hook callbacks capture observations; runtime systems consume owned snapshots.
+//!
+//! # Data flow
+//!
+//! [`sampling`] reads build-specific game state and publishes copied
+//! observations. [`callback`] transfers those observations into the game
+//! schedule, then [`effects`] validates and applies accepted intents. [`hooks`]
+//! owns the native callback bridges, while [`memory`] contains guarded address
+//! reads. No `abi` pointer is exposed to systems or scripts.
+//!
+//! # Threading
+//!
+//! Hook callbacks must stay short and nonblocking. Cross-thread consumers read
+//! atomically published snapshots; they never retain engine-owned addresses.
 mod callback;
 mod config;
 mod effects;

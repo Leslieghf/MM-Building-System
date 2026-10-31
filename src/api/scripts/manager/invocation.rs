@@ -1,4 +1,12 @@
 //! One bounded Rhai callback invocation and persistent-state validation.
+//!
+//! # Contract
+//!
+//! Invocation limits are applied by the configured engine before user code
+//! runs. The scope and callback-local collectors are discarded afterward;
+//! only values accepted by the persistent-state validator survive. Errors are
+//! returned to the manager as script events and do not unwind through the game
+//! callback.
 use super::*;
 
 pub(super) fn invoke(

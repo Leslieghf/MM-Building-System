@@ -1,4 +1,14 @@
 //! Game-side Bevy runtime and callback orchestration.
+//!
+//! # Ownership
+//!
+//! [`GameRuntime`] owns game-world resources and systems for one runtime
+//! endpoint. It imports a copied [`GameSnapshot`], runs the configured game
+//! schedule, and returns typed effects through bounded channels. The native
+//! adapter owns all live game access; this world stores no native pointers.
+//!
+//! UI presentation uses a separate world and schedule so render work cannot
+//! accidentally call game APIs from the overlay thread.
 mod commands;
 mod effects;
 use super::{

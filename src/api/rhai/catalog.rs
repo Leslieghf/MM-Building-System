@@ -1,4 +1,10 @@
-//! Single source for the script API catalog and generated [`render_markdown`] reference.
+//! Single source for script API metadata and its generated Markdown reference.
+//!
+//! [`API_CAPABILITIES`] and [`API_CALLBACKS`] describe the supported contract;
+//! registration code and generated [`render_markdown`] output consume the same
+//! catalog so the reference cannot silently drift from the runtime bindings.
+//! Update catalog entries alongside any change to registered names, arguments,
+//! return values, capability checks, or callback semantics.
 
 /// Current script-visible contract version.
 ///

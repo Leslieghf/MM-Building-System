@@ -1,4 +1,9 @@
-//! Append-only diagnostics owned outside game sampling and rendering.
+//! Best-effort process diagnostics independent of callback and render timing.
+//!
+//! [`append_log`] writes timestamped messages under the user's local
+//! application data directory. Missing environment variables, directory
+//! errors, and file errors are intentionally ignored so diagnostics cannot
+//! prevent startup or interfere with game-thread work.
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;

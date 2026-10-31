@@ -1,4 +1,12 @@
-//! Script package manifest, validation rules, and prepared runtime payload.
+//! Script package identity, manifest validation, and compiled payload.
+//!
+//! # Package contract
+//!
+//! A package directory contains a manifest and its declared Rhai entry file.
+//! Validation checks the identifier, API version, capability names, callback
+//! phase map, and bounded source sizes before compilation. [`PreparedScript`]
+//! is an owned transfer value; it contains no live filesystem handles or game
+//! pointers.
 use super::{
     engine::{MAX_SOURCE_BYTES, RhaiEngineFactory},
     *,

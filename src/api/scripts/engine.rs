@@ -1,4 +1,12 @@
-//! Rhai engine limits, sandbox configuration, and package compilation interface.
+//! Rhai resource limits, sandbox policy, and package compilation interface.
+//!
+//! # Security boundary
+//!
+//! The engine registers only the host-provided context and pure helpers. It
+//! applies evaluation, operation, nesting, and data-size limits and does not
+//! enable arbitrary filesystem, process, network, FFI, or dynamic-module
+//! access. Package source is compiled on the loader worker, then invoked by the
+//! callback-bound [`super::manager`].
 use rhai::Engine;
 /// Maximum Rhai operations per callback evaluation.
 pub const MAX_OPERATIONS: u64 = 20_000;

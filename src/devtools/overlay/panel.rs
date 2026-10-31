@@ -1,4 +1,9 @@
-//! ImGui panels, widgets, and presentation formatting for the developer overlay.
+//! ImGui panel composition for input, scripts, console, and copied telemetry.
+//!
+//! Widgets read prepared UI state and submit typed UI requests. They do not
+//! call the game adapter or execute Rhai code. ANSI-like console styling is
+//! parsed as bounded presentation text by [`console_text`]; the renderer does
+//! not interpret arbitrary terminal control sequences.
 #[path = "panel/console_text.rs"]
 mod console_text;
 use super::*;

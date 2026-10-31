@@ -1,4 +1,9 @@
-//! Bounded debug geometry accepted from one Rhai callback invocation.
+//! Callback-local debug geometry validation and collection.
+//!
+//! Script calls are converted into owned [`DebugPrimitive`] values after
+//! finite-coordinate, color, radius, and geometry-budget checks. This module
+//! does not invoke the renderer; accepted primitives are drained later by the
+//! game adapter. Limits apply both to item count and estimated geometry work.
 use super::{numeric_value, require_capability};
 use rhai::{Array, Map};
 use std::sync::{

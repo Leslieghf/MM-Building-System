@@ -1,4 +1,9 @@
-//! Bounded script-package discovery and manifest validation.
+//! Bounded directory scanning and structural manifest validation.
+//!
+//! Discovery accepts package directories beneath the configured root and
+//! validates their manifests without compiling their scripts. Directory,
+//! manifest-size, and package-count limits prevent an unbounded scan; source
+//! compilation belongs to the loader worker after a package is selected.
 use super::*;
 use std::{fs, path::Path};
 

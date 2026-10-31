@@ -1,4 +1,11 @@
-//! Guarded reads and memory-region checks used before native memory access.
+//! Guarded address validation and unaligned reads for native adapters.
+//!
+//! # Safety boundary
+//!
+//! Helpers first validate address ranges against the process memory map and
+//! then copy values into Rust-owned storage. They do not make a pointer safe to
+//! retain, prove the target object's lifetime, or validate a guessed layout;
+//! callers still need executable-build and callback-phase checks.
 use super::*;
 
 pub(super) fn matches_supported_executable() -> bool {

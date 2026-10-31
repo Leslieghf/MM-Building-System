@@ -1,4 +1,11 @@
 //! Transfer queued UI intents to the game callback through bounded channels.
+//!
+//! # Retry behavior
+//!
+//! Intents are ordered by their assigned request ID before submission. A
+//! successful send removes the UI entity; a full channel leaves pending
+//! entities for the next render. A disconnected endpoint stops the transfer
+//! without blocking the render thread.
 use super::*;
 
 /// Transfer UI-world intent entities into the bounded game-world transport.

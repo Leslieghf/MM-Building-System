@@ -1,4 +1,17 @@
-//! Background compilation worker and bounded script-package I/O.
+//! Background package discovery and compilation worker.
+//!
+//! # Thread boundary
+//!
+//! Requests and results cross bounded channels; the worker never accesses ECS
+//! worlds, UI state, or native game memory. Callers use nonblocking submission
+//! and poll results from their owning callback. Queue saturation is reported
+//! to the caller rather than blocking either callback thread.
+//!
+//! # Package handling
+//!
+//! Filesystem paths are restricted to the configured discovery root, package
+//! scans and reads are bounded, and Rhai compilation happens on the worker.
+//! See `discovery` for scan limits and [`super::package`] for manifest rules.
 mod discovery;
 use super::{
     engine::RhaiEngineFactory,

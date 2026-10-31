@@ -1,4 +1,18 @@
-//! DX11/ImGui presentation and lifecycle for the developer overlay.
+//! DX11/ImGui rendering, input ownership, and hook lifecycle for developer tools.
+//!
+//! # Thread and ownership boundary
+//!
+//! The swap-chain callback owns ImGui frame construction and overlay input.
+//! It reads copied presentation resources and submits UI intents through
+//! bounded channels; game reads, script callbacks, and native effects remain
+//! on the accepted game callback. Overlay installation is guarded by the
+//! supported executable/build checks in the game adapter.
+//!
+//! # Failure behavior
+//!
+//! Hook setup failures are reported through process diagnostics and leave game
+//! sampling disabled. Rendering must not wait for script compilation or game
+//! work; UI state remains local to this module and `devtools::model`.
 mod clipboard;
 mod config;
 mod panel;

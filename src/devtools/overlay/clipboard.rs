@@ -1,4 +1,9 @@
-//! Win32 clipboard adapter required by ImGui text fields.
+//! Win32 clipboard adapter used by ImGui text fields.
+//!
+//! Text is copied through the Windows clipboard API with explicit UTF-16
+//! conversion and a maximum byte/character bound. The adapter is only used by
+//! the overlay's clipboard callbacks and does not expose process or file
+//! access to scripts.
 use super::config::{CF_UNICODETEXT, GMEM_MOVEABLE, MAX_CLIPBOARD_UTF16_UNITS};
 use hudhook::imgui;
 

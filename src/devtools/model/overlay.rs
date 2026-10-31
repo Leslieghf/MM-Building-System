@@ -1,4 +1,8 @@
-//! Overlay input ownership, appearance preferences, and spawn-panel state.
+//! Overlay-local input capture, appearance preferences, and test-panel state.
+//!
+//! Resources here describe UI preferences and the state of the developer-only
+//! spawn panel. They are not game entities or durable mod content; accepted
+//! requests are emitted as typed intents for the game runtime to validate.
 use bevy_ecs::prelude::Resource;
 
 #[derive(Resource, Debug, Default, Clone, Copy)]

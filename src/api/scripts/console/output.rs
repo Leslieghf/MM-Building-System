@@ -1,4 +1,8 @@
-//! UI-owned bounded scrollback and local command result presentation.
+//! UI-owned bounded scrollback and command-result presentation.
+//!
+//! This module only formats and retains owned console events. It does not run
+//! commands or inspect Rhai values. Scrollback and rendered row sizes are
+//! bounded; trimming affects presentation history, not script lifecycle state.
 use super::{
     ConsoleEvent, ConsoleEventReceiver, ConsoleEventSink, ConsoleRequestSender, ConsoleSeverity,
     MAX_COMMAND_BYTES, MAX_EVENTS_PER_RENDER, MAX_SCROLLBACK_BYTES, MAX_SCROLLBACK_ENTRIES,

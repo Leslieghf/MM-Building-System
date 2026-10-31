@@ -1,4 +1,10 @@
-//! Translate the stable mod input keys to and from the overlay's ImGui backend.
+//! Translate the stable mod-owned input snapshot to and from ImGui key IDs.
+//!
+//! The mapping isolates the public [`crate::api::ecs::input_key::InputKey`]
+//! identifiers from backend-specific ImGui enums. Input capture is owned by
+//! the overlay thread; the resulting snapshot is copied for game and script
+//! consumers. Input suppression is a separate overlay-capture policy and is
+//! not performed by this mapping layer.
 use crate::api::ecs::input_key::InputKey;
 use hudhook::imgui;
 

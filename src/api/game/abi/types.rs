@@ -1,4 +1,18 @@
-//! Value layouts and scalar aliases shared by the supported game ABI.
+//! Pointer-free value layouts and scalar operations used at the game boundary.
+//!
+//! # Contract
+//!
+//! These `repr(C)` values can be copied across the native boundary when the
+//! corresponding signature requires them. They do not model engine-owned
+//! objects, validate a native pointer, or provide a stable third-party ABI.
+//! Application code should prefer the owned snapshots in
+//! [`crate::api::ecs::GameSnapshot`].
+//!
+//! # Coordinates
+//!
+//! [`Matrix4x4`] stores rows in row-major order. This project reads basis
+//! vectors from rows 0–2 and translation from row 3; that observed convention
+//! is not a guarantee for every game matrix.
 
 /// A four-byte SDK hash value.
 ///
@@ -40,6 +54,7 @@ pub struct Vector2 {
 }
 
 impl Vector2 {
+    /// Construct a two-component value without conversion or normalization.
     pub const fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
@@ -55,19 +70,24 @@ pub struct Vector3 {
 }
 
 impl Vector3 {
+    /// Construct a three-component value without conversion or normalization.
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 
+    /// Return the Euclidean length of this vector.
     pub fn magnitude(self) -> f32 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
 
+    /// Return the Euclidean distance between this point and `other`.
     pub fn distance(self, other: Self) -> f32 {
         (self - other).magnitude()
     }
 
     /// Component-wise interpolation, matching the SDK's `Lerp` helper.
+    ///
+    /// `progress` is not clamped; values outside `0..=1` extrapolate.
     pub fn lerp(from: Self, to: Self, progress: f32) -> Self {
         from * (1.0 - progress) + to * progress
     }
@@ -116,10 +136,12 @@ pub struct Vector4 {
 }
 
 impl Vector4 {
+    /// Construct a four-component value in `(x, y, z, w)` order.
     pub const fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
         Self { x, y, z, w }
     }
 
+    /// Extend a position-like vector with homogeneous `w = 1`.
     pub const fn from_vector3(value: Vector3) -> Self {
         Self::new(value.x, value.y, value.z, 1.0)
     }
@@ -152,10 +174,12 @@ pub struct Quaternion {
 }
 
 impl Quaternion {
+    /// Construct raw `(x, y, z, w)` storage without normalization.
     pub const fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
         Self { x, y, z, w }
     }
 
+    /// Replace all four components without normalization.
     pub fn set(&mut self, x: f32, y: f32, z: f32, w: f32) {
         *self = Self::new(x, y, z, w);
     }
@@ -173,6 +197,7 @@ pub struct Matrix4x4 {
 }
 
 impl Matrix4x4 {
+    /// Return a row-major identity matrix.
     pub const fn identity() -> Self {
         Self::from_rows([
             [1.0, 0.0, 0.0, 0.0],
@@ -182,38 +207,47 @@ impl Matrix4x4 {
         ])
     }
 
+    /// Construct a row-major matrix from its four rows.
     pub const fn from_rows(rows: [[f32; 4]; 4]) -> Self {
         Self { values: rows }
     }
 
+    /// Return row 0's first three components.
     pub const fn right(self) -> Vector3 {
         Vector3::new(self.values[0][0], self.values[0][1], self.values[0][2])
     }
 
+    /// Return row 1's first three components.
     pub const fn forward(self) -> Vector3 {
         Vector3::new(self.values[1][0], self.values[1][1], self.values[1][2])
     }
 
+    /// Return row 2's first three components.
     pub const fn up(self) -> Vector3 {
         Vector3::new(self.values[2][0], self.values[2][1], self.values[2][2])
     }
 
+    /// Return row 3's first three components.
     pub const fn translation(self) -> Vector3 {
         Vector3::new(self.values[3][0], self.values[3][1], self.values[3][2])
     }
 
+    /// Replace row 0 and set its homogeneous component to zero.
     pub fn set_right(&mut self, value: Vector3) {
         self.values[0] = [value.x, value.y, value.z, 0.0];
     }
 
+    /// Replace row 1 and set its homogeneous component to zero.
     pub fn set_forward(&mut self, value: Vector3) {
         self.values[1] = [value.x, value.y, value.z, 0.0];
     }
 
+    /// Replace row 2 and set its homogeneous component to zero.
     pub fn set_up(&mut self, value: Vector3) {
         self.values[2] = [value.x, value.y, value.z, 0.0];
     }
 
+    /// Replace row 3 and set its homogeneous component to one.
     pub fn set_translation(&mut self, value: Vector3) {
         self.values[3] = [value.x, value.y, value.z, 1.0];
     }
