@@ -1,7 +1,6 @@
 //! Copied frame data imported from the game-native boundary.
 //!
 //! These values contain owned observations only; native addresses are diagnostic identifiers, not handles.
-use super::super::types::RaycastCandidateShape;
 use super::super::{IntentOutcome, SpawnOutcome};
 use crate::api::game::abi::types::Matrix4x4;
 use bevy_ecs::prelude::Resource;
@@ -72,51 +71,12 @@ pub struct GameSnapshot {
     pub player_rotation: Option<[f32; 3]>,
     /// Sampled view/camera rotation values.
     pub view_rotation: Option<[f32; 3]>,
-    /// Camera ray submitted through the static-only query filter.
-    pub reticle_ray_origin: Option<[f32; 3]>,
-    /// Direction of the sampled reticle ray.
-    pub reticle_ray_direction: Option<[f32; 3]>,
-    /// Whether the static-only reticle query could be called.
-    pub reticle_query_available: bool,
-    /// Whether the static-only query reported an internal query state.
-    pub reticle_query_state_present: bool,
-    /// Caller-observed segment fraction; values below one are candidate hits
-    /// for this filter/query contract, not a universal WorldQueryHelper rule.
-    pub reticle_hit_fraction: Option<f32>,
-    /// Point reconstructed as origin + direction * (range * fraction).
-    pub reticle_candidate_position: Option<[f32; 3]>,
-    /// Diagnostic identity observed for the candidate shape; not a game handle.
-    pub reticle_candidate_shape: Option<RaycastCandidateShape>,
-    /// Whether the player-aim filter query could be called.
-    pub player_aim_query_available: bool,
-    /// Whether the player-aim query reported an internal state.
-    pub player_aim_query_state_present: bool,
-    /// Candidate hit fraction for the player-aim filter.
-    pub player_aim_hit_fraction: Option<f32>,
-    /// Reconstructed candidate point for the player-aim filter.
-    pub player_aim_candidate_position: Option<[f32; 3]>,
-    /// Candidate shape observed for the player-aim filter.
-    pub player_aim_candidate_shape: Option<RaycastCandidateShape>,
-    /// Whether the ignore-characters-and-vehicles query could be called.
-    pub ignore_characters_vehicles_query_available: bool,
-    /// Whether that query reported an internal state.
-    pub ignore_characters_vehicles_query_state_present: bool,
-    /// Candidate fraction returned for that query.
-    pub ignore_characters_vehicles_hit_fraction: Option<f32>,
-    /// Reconstructed candidate point for that query.
-    pub ignore_characters_vehicles_candidate_position: Option<[f32; 3]>,
-    /// Candidate shape observed for that query.
-    pub ignore_characters_vehicles_candidate_shape: Option<RaycastCandidateShape>,
-    /// Whether the player-owner exclusion query could be called.
-    pub ignore_player_owner_query_available: bool,
-    /// Whether the owner-exclusion query reported an internal state.
-    pub ignore_player_owner_query_state_present: bool,
-    /// Candidate fraction returned for the owner-exclusion query.
-    pub ignore_player_owner_hit_fraction: Option<f32>,
-    /// Reconstructed candidate point for the owner-exclusion query.
-    pub ignore_player_owner_candidate_position: Option<[f32; 3]>,
-    /// Candidate shape observed for the owner-exclusion query.
-    pub ignore_player_owner_candidate_shape: Option<RaycastCandidateShape>,
+    /// Camera-world position copied from the current camera matrix.
+    pub camera_position: Option<[f32; 3]>,
+    /// Normalized candidate view direction copied from the camera matrix.
+    pub camera_direction: Option<[f32; 3]>,
+    /// Latest completed `reticle_ray` script result; absent for misses.
+    pub raycast_hit_position: Option<[f32; 3]>,
     /// Sampled player linear velocity.
     pub player_velocity: Option<[f32; 3]>,
     /// Sampled player acceleration.

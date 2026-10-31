@@ -349,6 +349,12 @@ impl GameRuntime {
 
     fn run_and_publish(&mut self, mut snapshot: GameSnapshot) -> Option<PendingGameIntent> {
         self.app.world_mut().run_schedule(MadMaxPostSim);
+        snapshot.raycast_hit_position = self
+            .app
+            .world()
+            .resource::<crate::api::scripts::manager::ScriptManager>()
+            .latest_reticle_hit_position()
+            .flatten();
         {
             let mut diagnostics = self.app.world_mut().resource_mut::<RuntimeDiagnostics>();
             diagnostics.post_sim_schedule_runs =

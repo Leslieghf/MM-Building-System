@@ -16,9 +16,10 @@ use crate::api::{
 };
 pub(crate) use debug_draw::{DebugPrimitive, InvocationDebugDraw};
 use rhai::{Array, Dynamic, Engine, Map};
+use std::collections::BTreeMap;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
 /// Runtime API version and descriptor catalog used by package validation.
@@ -56,9 +57,11 @@ impl ScriptApiRegistry {
 pub struct GamePostSimContext {
     frame: Map,
     math: ScriptMath,
+    camera: CopiedObject,
     player: CopiedObject,
     vehicle: CopiedObject,
     input: CopiedInput,
+    raycast: InvocationRaycast,
     debug: InvocationDebugDraw,
     log: InvocationLog,
     can_read: bool,
@@ -130,6 +133,298 @@ struct CopiedObject {
     values: Map,
     write: Option<InvocationVehicleWrite>,
 }
+
+const MAX_RAYCAST_TICKETS: usize = 1024;
+static NEXT_RAYCAST_TICKET: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Default)]
+pub(crate) struct RaycastTicketStore(Arc<Mutex<BTreeMap<u64, RaycastTicketEntry>>>);
+
+#[derive(Clone)]
+struct RaycastTicketEntry {
+    owner: ScriptId,
+    generation: ScriptGeneration,
+    expires_at: u64,
+    available: Option<bool>,
+    state_present: bool,
+    fraction: Option<f32>,
+    hit_position: Option<[f32; 3]>,
+}
+
+impl RaycastTicketStore {
+    pub(crate) fn has_capacity(&self) -> bool {
+        self.0
+            .lock()
+            .is_ok_and(|entries| entries.len() < MAX_RAYCAST_TICKETS)
+    }
+
+    pub(crate) fn insert_pending(&self, request: &ScriptRaycastRequest) -> bool {
+        let Ok(mut entries) = self.0.lock() else {
+            return false;
+        };
+        if entries.len() >= MAX_RAYCAST_TICKETS {
+            return false;
+        }
+        entries.insert(
+            request.ticket,
+            RaycastTicketEntry {
+                owner: request.source.id.clone(),
+                generation: request.source.generation,
+                expires_at: request.expires_at,
+                available: None,
+                state_present: false,
+                fraction: None,
+                hit_position: None,
+            },
+        );
+        true
+    }
+
+    pub(crate) fn complete(&self, completion: ScriptRaycastCompletion) -> bool {
+        let Ok(mut entries) = self.0.lock() else {
+            return false;
+        };
+        let Some(entry) = entries.get_mut(&completion.ticket) else {
+            return false;
+        };
+        if entry.owner != completion.source.id
+            || entry.generation != completion.source.generation
+            || entry.available.is_some()
+        {
+            return false;
+        }
+        entry.available = Some(completion.available);
+        entry.state_present = completion.state_present;
+        entry.fraction = completion.fraction;
+        entry.hit_position = completion.hit_position;
+        true
+    }
+
+    pub(crate) fn expire(&self, callback_sequence: u64) {
+        if let Ok(mut entries) = self.0.lock() {
+            entries.retain(|_, entry| callback_sequence <= entry.expires_at.saturating_add(120));
+        }
+    }
+
+    pub(crate) fn remove_owner(&self, owner: &ScriptId) {
+        if let Ok(mut entries) = self.0.lock() {
+            entries.retain(|_, entry| &entry.owner != owner);
+        }
+    }
+
+    pub(crate) fn remove_ticket(&self, ticket: u64) {
+        if let Ok(mut entries) = self.0.lock() {
+            entries.remove(&ticket);
+        }
+    }
+
+    pub(crate) fn latest_result_for(&self, owner: &str) -> Option<Option<[f32; 3]>> {
+        let entries = self.0.lock().ok()?;
+        entries
+            .iter()
+            .rev()
+            .find(|(_, entry)| entry.owner.as_str() == owner && entry.available.is_some())
+            .map(|(_, entry)| entry.hit_position)
+    }
+
+    fn result(&self, ticket: i64, source: &ScriptEvent, callback_sequence: u64) -> Map {
+        let Some(ticket) = u64::try_from(ticket).ok() else {
+            return raycast_result_map("unknown", false, None, None, false);
+        };
+        let Ok(entries) = self.0.lock() else {
+            return raycast_result_map("unavailable", false, None, None, false);
+        };
+        let Some(entry) = entries.get(&ticket) else {
+            return raycast_result_map("unknown", false, None, None, false);
+        };
+        if entry.owner != source.id || entry.generation != source.generation {
+            return raycast_result_map("unknown", false, None, None, false);
+        }
+        if callback_sequence > entry.expires_at {
+            return raycast_result_map("expired", false, None, None, false);
+        }
+        match entry.available {
+            None => raycast_result_map("pending", false, None, None, false),
+            Some(false) => raycast_result_map("unavailable", false, None, None, false),
+            Some(true) => raycast_result_map(
+                "complete",
+                entry.fraction.is_some_and(|fraction| fraction < 1.0)
+                    && entry.hit_position.is_some(),
+                entry.hit_position,
+                entry.fraction,
+                entry.state_present,
+            ),
+        }
+    }
+}
+
+fn raycast_result_map(
+    state: &str,
+    has_hit: bool,
+    hit_position: Option<[f32; 3]>,
+    fraction: Option<f32>,
+    state_present: bool,
+) -> Map {
+    let mut result = Map::new();
+    result.insert("state".into(), Dynamic::from(state.to_owned()));
+    result.insert("has_hit".into(), Dynamic::from(has_hit));
+    result.insert("hit_position".into(), vector(hit_position));
+    result.insert(
+        "fraction".into(),
+        fraction.map_or(Dynamic::UNIT, |value| Dynamic::from(f64::from(value))),
+    );
+    result.insert("state_present".into(), Dynamic::from(state_present));
+    result
+}
+
+#[derive(Clone)]
+pub(crate) struct InvocationRaycast {
+    active: Arc<AtomicBool>,
+    request: Arc<Mutex<Option<ScriptRaycastRequest>>>,
+    allowed: bool,
+    capacity: bool,
+    source: ScriptEvent,
+    callback_sequence: u64,
+    tickets: RaycastTicketStore,
+}
+
+impl InvocationRaycast {
+    #[cfg(test)]
+    fn disabled() -> Self {
+        Self::new(
+            false,
+            false,
+            ScriptEvent {
+                request_id: None,
+                id: ScriptId::parse("invalid").expect("valid static script ID"),
+                generation: ScriptGeneration(0),
+                phase: ScriptPhaseId::GamePostSim,
+                callback: "on_post_sim".into(),
+                kind: ScriptEventKind::Log,
+                status: None,
+                auto_reload: false,
+                reload_error: None,
+                line: None,
+                column: None,
+                text: String::new(),
+            },
+            0,
+            RaycastTicketStore::default(),
+        )
+    }
+
+    pub(crate) fn new(
+        allowed: bool,
+        capacity: bool,
+        source: ScriptEvent,
+        callback_sequence: u64,
+        tickets: RaycastTicketStore,
+    ) -> Self {
+        Self {
+            active: Arc::new(AtomicBool::new(true)),
+            request: Arc::new(Mutex::new(None)),
+            allowed,
+            capacity,
+            source,
+            callback_sequence,
+            tickets,
+        }
+    }
+
+    pub(crate) fn finish(&self) -> Option<ScriptRaycastRequest> {
+        self.active.store(false, Ordering::Relaxed);
+        self.request.lock().ok()?.take()
+    }
+
+    fn request(
+        &mut self,
+        origin: Map,
+        direction: Map,
+        max_distance: Dynamic,
+        filter_name: &str,
+    ) -> Result<i64, Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "game.raycast")?;
+        if !self.active.load(Ordering::Relaxed) {
+            return Err("raycast context has expired".into());
+        }
+        if !self.capacity || !self.tickets.has_capacity() {
+            return Err("raycast request queue full; retry on a later callback".into());
+        }
+        let mut request = self
+            .request
+            .lock()
+            .map_err(|_| Box::<rhai::EvalAltResult>::from("raycast request lock unavailable"))?;
+        if request.is_some() {
+            return Err("only one raycast request is allowed per invocation".into());
+        }
+        let origin = parse_script_vector(origin, "raycast origin")?;
+        let direction = parse_script_vector(direction, "raycast direction")?;
+        let length = (direction[0] * direction[0]
+            + direction[1] * direction[1]
+            + direction[2] * direction[2])
+            .sqrt();
+        if !length.is_finite() || length <= f32::EPSILON {
+            return Err("raycast direction must have nonzero length".into());
+        }
+        let distance = numeric_value(max_distance, "raycast distance must be numeric")?;
+        if !distance.is_finite() || distance <= 0.0 || distance > 500.0 {
+            return Err("raycast distance must be greater than 0 and at most 500".into());
+        }
+        let filter = match filter_name {
+            "static_only" => ScriptRaycastFilter::StaticOnly,
+            "player_aim" => ScriptRaycastFilter::PlayerAim,
+            _ => return Err("unknown raycast filter; use static_only or player_aim".into()),
+        };
+        if origin.iter().any(|value| value.abs() > 100_000.0) {
+            return Err("raycast coordinates must be within [-100000,100000]".into());
+        }
+        let ticket = NEXT_RAYCAST_TICKET
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                (next > 0 && next < i64::MAX as u64).then_some(next + 1)
+            })
+            .map_err(|_| Box::<rhai::EvalAltResult>::from("raycast ticket space exhausted"))?;
+        let direction = direction.map(|value| value / length);
+        *request = Some(ScriptRaycastRequest {
+            ticket,
+            origin,
+            direction,
+            max_distance: distance as f32,
+            filter,
+            source: self.source.clone(),
+            expires_at: self.callback_sequence.saturating_add(120),
+        });
+        Ok(ticket as i64)
+    }
+
+    fn result(&mut self, ticket: rhai::INT) -> Result<Map, Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "game.raycast")?;
+        Ok(self
+            .tickets
+            .result(ticket, &self.source, self.callback_sequence))
+    }
+}
+
+fn parse_script_vector(
+    map: Map,
+    label: &'static str,
+) -> Result<[f32; 3], Box<rhai::EvalAltResult>> {
+    if map.len() != 3 {
+        return Err(format!("{label} requires exactly x, y, z components").into());
+    }
+    let mut components = [0.0; 3];
+    for (index, name) in ["x", "y", "z"].into_iter().enumerate() {
+        let value = map.get(name).cloned().ok_or_else(|| {
+            Box::<rhai::EvalAltResult>::from(format!("{label} is missing {name}"))
+        })?;
+        let value = numeric_value(value, "raycast vector components must be numeric")?;
+        if !value.is_finite() || value.abs() > 100_000.0 {
+            return Err(format!("{label} components must be finite and within ±100000").into());
+        }
+        components[index] = value as f32;
+    }
+    Ok(components)
+}
+
 pub(crate) const MAX_VELOCITY_COMPONENT: f64 = 250.0;
 
 /// Owned invocation-local intent. It never contains an engine pointer or entity.
@@ -141,6 +436,7 @@ pub(crate) struct InvocationVehicleWrite {
     available: bool,
     capacity: bool,
 }
+
 impl InvocationVehicleWrite {
     pub(crate) fn new(allowed: bool, available: bool, capacity: bool) -> Self {
         Self {
@@ -294,6 +590,7 @@ fn object(
     }
 }
 impl GamePostSimContext {
+    #[cfg(test)]
     pub(crate) fn new(
         snapshot: GameSnapshot,
         log: InvocationLog,
@@ -301,11 +598,33 @@ impl GamePostSimContext {
         write: InvocationVehicleWrite,
         debug: InvocationDebugDraw,
     ) -> Self {
+        Self::new_with_raycast(
+            snapshot,
+            log,
+            capabilities,
+            write,
+            InvocationRaycast::disabled(),
+            debug,
+        )
+    }
+
+    pub(crate) fn new_with_raycast(
+        snapshot: GameSnapshot,
+        log: InvocationLog,
+        capabilities: &[String],
+        write: InvocationVehicleWrite,
+        raycast: InvocationRaycast,
+        debug: InvocationDebugDraw,
+    ) -> Self {
         let mut frame = Map::new();
         frame.insert("phase".into(), Dynamic::from("game.post_sim"));
         frame.insert(
             "sequence".into(),
             Dynamic::from(snapshot.callback_sequence.min(i64::MAX as u64) as i64),
+        );
+        frame.insert(
+            "sample_sequence".into(),
+            Dynamic::from(snapshot.sample_sequence.min(i64::MAX as u64) as i64),
         );
         frame.insert(
             "delta_seconds".into(),
@@ -324,8 +643,10 @@ impl GamePostSimContext {
         Self {
             frame,
             math: ScriptMath,
+            camera: camera_object(snapshot.camera_position, snapshot.camera_direction),
             can_read: capabilities.iter().any(|id| id == "game.read"),
             can_log: capabilities.iter().any(|id| id == "log"),
+            raycast,
             player: object(
                 snapshot.player_position,
                 snapshot.player_transform,
@@ -370,12 +691,17 @@ fn register_context_properties(engine: &mut Engine) {
     engine
         .register_type_with_name::<GamePostSimContext>("MadMaxPostSimContext")
         .register_type_with_name::<CopiedObject>("MadMaxCopiedObject")
+        .register_type_with_name::<InvocationRaycast>("MadMaxRaycast")
         .register_type_with_name::<CopiedInput>("MadMaxInputFrame")
         .register_type_with_name::<ScriptFormatter>("MadMaxFormatter")
         .register_type_with_name::<InvocationLog>("MadMaxLog")
         .register_type_with_name::<InvocationDebugDraw>("MadMaxDebugDraw")
         .register_get("frame", |ctx: &mut GamePostSimContext| ctx.frame.clone())
         .register_get("math", |ctx: &mut GamePostSimContext| ctx.math)
+        .register_get("camera", |ctx: &mut GamePostSimContext| {
+            require_capability(ctx.can_read, "game.read")?;
+            Ok::<_, Box<rhai::EvalAltResult>>(ctx.camera.clone())
+        })
         .register_get("player", |ctx: &mut GamePostSimContext| {
             require_capability(ctx.can_read, "game.read")?;
             Ok::<_, Box<rhai::EvalAltResult>>(ctx.player.clone())
@@ -383,6 +709,10 @@ fn register_context_properties(engine: &mut Engine) {
         .register_get("vehicle", |ctx: &mut GamePostSimContext| {
             require_capability(ctx.can_read, "game.read")?;
             Ok::<_, Box<rhai::EvalAltResult>>(ctx.vehicle.clone())
+        })
+        .register_get("raycast", |ctx: &mut GamePostSimContext| {
+            require_capability(ctx.raycast.allowed, "game.raycast")?;
+            Ok::<_, Box<rhai::EvalAltResult>>(ctx.raycast.clone())
         })
         .register_get("input", |ctx: &mut GamePostSimContext| {
             require_capability(ctx.input.allowed, "input.read")?;
@@ -398,6 +728,16 @@ fn register_context_properties(engine: &mut Engine) {
         })
         .register_get("format", |_ctx: &mut GamePostSimContext| ScriptFormatter)
         .register_fn("info", InvocationLog::info);
+    engine
+        .register_fn(
+            "request",
+            |raycast: &mut InvocationRaycast,
+             origin: Map,
+             direction: Map,
+             distance: Dynamic,
+             filter: &str| raycast.request(origin, direction, distance, filter),
+        )
+        .register_fn("result", InvocationRaycast::result);
 }
 
 fn register_basic_debug_draw(engine: &mut Engine) {
@@ -505,6 +845,15 @@ fn register_copied_object_properties(engine: &mut Engine) {
     for name in [
         "available",
         "position",
+        "direction",
+        "query_available",
+        "state_present",
+        "position",
+        "origin",
+        "direction",
+        "hit_fraction",
+        "hit_position",
+        "has_hit",
         "transform",
         "forward",
         "rotation",
@@ -515,6 +864,20 @@ fn register_copied_object_properties(engine: &mut Engine) {
         engine.register_get(name, move |object: &mut CopiedObject| {
             object.values.get(name).cloned().unwrap_or(Dynamic::UNIT)
         });
+    }
+}
+
+fn camera_object(position: Option<[f32; 3]>, direction: Option<[f32; 3]>) -> CopiedObject {
+    let mut values = Map::new();
+    values.insert(
+        "available".into(),
+        Dynamic::from(position.is_some() && direction.is_some()),
+    );
+    values.insert("position".into(), vector(position));
+    values.insert("direction".into(), vector(direction));
+    CopiedObject {
+        values,
+        write: None,
     }
 }
 fn require_capability(allowed: bool, id: &str) -> Result<(), Box<rhai::EvalAltResult>> {
@@ -621,7 +984,7 @@ mod math_integration_tests {
                     player_forward: Some([0.0, 0.0, -1.0]),
                     ..GameSnapshot::default()
                 },
-                log,
+                log.clone(),
                 &["game.read".to_owned()],
                 InvocationVehicleWrite::new(false, false, false),
                 InvocationDebugDraw::new(false, 32, 256),
@@ -743,7 +1106,7 @@ mod debug_draw_tests {
             "ctx",
             GamePostSimContext::new(
                 snapshot,
-                log,
+                log.clone(),
                 &capabilities,
                 InvocationVehicleWrite::new(false, false, false),
                 InvocationDebugDraw::new(true, 32, 256),
@@ -778,6 +1141,109 @@ mod debug_draw_tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn camera_snapshot_is_available_as_copied_script_data() {
+        let mut engine = Engine::new();
+        register_v1(&mut engine);
+        let mut scope = rhai::Scope::new();
+        let (sink, _receiver) = crate::api::scripts::console::event_channel();
+        let log = InvocationLog::new(
+            crate::api::scripts::ScriptEventSink(sink),
+            crate::api::scripts::ScriptEvent {
+                request_id: None,
+                id: ScriptId::parse("reticle_ray").expect("test script ID is valid"),
+                generation: ScriptGeneration(1),
+                phase: ScriptPhaseId::GamePostSim,
+                callback: "on_post_sim".into(),
+                kind: ScriptEventKind::Log,
+                status: None,
+                auto_reload: false,
+                reload_error: None,
+                line: None,
+                column: None,
+                text: String::new(),
+            },
+        );
+        let snapshot = GameSnapshot {
+            camera_position: Some([1.0, 2.0, 3.0]),
+            camera_direction: Some([0.0, 0.0, -1.0]),
+            ..GameSnapshot::default()
+        };
+        scope.push(
+            "ctx",
+            GamePostSimContext::new(
+                snapshot,
+                log,
+                &["game.read".to_owned()],
+                InvocationVehicleWrite::new(false, false, false),
+                InvocationDebugDraw::new(false, 32, 256),
+            ),
+        );
+        assert_eq!(
+            engine
+                .eval_with_scope::<f64>(&mut scope, "ctx.camera.position.x")
+                .expect("camera position should be readable"),
+            1.0
+        );
+        assert_eq!(
+            engine
+                .eval_with_scope::<f64>(&mut scope, "ctx.camera.direction.z")
+                .expect("camera direction should be readable"),
+            -1.0
+        );
+    }
+
+    #[test]
+    fn reticle_ray_script_uses_the_general_raycast_request_api() {
+        let script = include_str!("../../../examples/scripts/reticle_ray/main.rhai");
+        let mut engine = Engine::new();
+        register_v1(&mut engine);
+        let source = format!("{script}\non_post_sim(ctx);");
+        let (sink, _receiver) = crate::api::scripts::console::event_channel();
+        let event = crate::api::scripts::ScriptEvent {
+            request_id: None,
+            id: ScriptId::parse("reticle_ray").expect("test script ID is valid"),
+            generation: ScriptGeneration(1),
+            phase: ScriptPhaseId::GamePostSim,
+            callback: "on_post_sim".into(),
+            kind: ScriptEventKind::Log,
+            status: None,
+            auto_reload: false,
+            reload_error: None,
+            line: None,
+            column: None,
+            text: String::new(),
+        };
+        let log = InvocationLog::new(crate::api::scripts::ScriptEventSink(sink), event.clone());
+        let raycast = InvocationRaycast::new(true, true, event, 1, RaycastTicketStore::default());
+        let snapshot = GameSnapshot {
+            callback_sequence: 1,
+            sample_sequence: 1,
+            camera_position: Some([0.0, 1.0, 2.0]),
+            camera_direction: Some([0.0, 0.0, -1.0]),
+            ..GameSnapshot::default()
+        };
+        let context = GamePostSimContext::new_with_raycast(
+            snapshot,
+            log,
+            &["game.read".to_owned(), "game.raycast".to_owned()],
+            InvocationVehicleWrite::new(false, false, false),
+            raycast.clone(),
+            InvocationDebugDraw::new(false, 32, 256),
+        );
+        let mut scope = rhai::Scope::new();
+        scope.push("state", Map::new());
+        scope.push("ctx", context);
+        engine
+            .eval_with_scope::<()>(&mut scope, &source)
+            .expect("reticle callback should request the camera ray");
+        let request = raycast
+            .finish()
+            .expect("camera ray request should be queued");
+        assert_eq!(request.origin, [0.0, 1.0, 2.0]);
+        assert_eq!(request.direction, [0.0, 0.0, -1.0]);
     }
 
     #[test]

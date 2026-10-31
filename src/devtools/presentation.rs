@@ -18,8 +18,6 @@ use crate::api::format::{
     angles as format_angles, fixed as format_fixed, magnitude as format_magnitude,
     vector as format_vector,
 };
-use crate::api::game::abi::build::steam::IMAGE_BASE as STEAM_IMAGE_BASE;
-use crate::api::game::abi::game::world_query::C_CUSTOM_SAMPLED_HEIGHT_FIELD_SHAPE_VFTABLE_RVA;
 use crate::api::scripts::console::ConsoleOutput;
 use crate::devtools::state::*;
 use bevy_app::App;
@@ -69,10 +67,7 @@ fn prepare_presentation(
     rows.reserve(31);
     append_player_rows(&data, rows);
     append_camera_rows(&data, rows);
-    append_static_query_rows(&data, rows);
-    append_player_aim_rows(&data, rows);
-    append_ignore_actor_rows(&data, rows);
-    append_ignore_owner_rows(&data, rows);
+    append_reticle_query_rows(&data, rows);
     append_vehicle_rows(&data, rows);
     append_runtime_rows(&data, &diagnostics, rows);
 }
@@ -108,267 +103,11 @@ fn append_camera_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     ));
 }
 
-fn append_static_query_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
-    append_reticle_query_status(data, rows);
-    append_reticle_ray(data, rows);
-    append_reticle_hit(data, rows);
-}
-
-fn append_reticle_query_status(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
+fn append_reticle_query_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
     rows.push(row(
         DebugSection::Raycast,
-        "Static-only query",
-        if data.reticle_query_available {
-            format!(
-                "active / {}",
-                if data.reticle_query_state_present {
-                    "result state present"
-                } else {
-                    "no result state"
-                }
-            )
-        } else {
-            "unavailable".to_owned()
-        },
-    ));
-}
-
-fn append_reticle_ray(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ray origin",
-        format_vector(data.reticle_ray_origin),
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ray direction",
-        format_vector(data.reticle_ray_direction),
-    ));
-}
-
-fn append_reticle_hit(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
-    rows.push(row(
-        DebugSection::Raycast,
-        "Static-only hit fraction",
-        data.reticle_hit_fraction.map_or_else(
-            || "unavailable".to_owned(),
-            |value| {
-                if value >= 1.0 {
-                    "no hit".to_owned()
-                } else {
-                    format_fixed(f64::from(value))
-                }
-            },
-        ),
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Static-only hit position",
-        data.reticle_candidate_position.map_or_else(
-            || {
-                if !data.reticle_query_available {
-                    "unavailable".to_owned()
-                } else if data
-                    .reticle_hit_fraction
-                    .is_some_and(|fraction| fraction >= 1.0)
-                {
-                    "no hit".to_owned()
-                } else {
-                    "unknown".to_owned()
-                }
-            },
-            |position| format_vector(Some(position)),
-        ),
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Static-only hit shape",
-        format_raycast_candidate_shape(
-            data.reticle_candidate_shape,
-            data.reticle_query_available,
-            data.reticle_hit_fraction,
-        ),
-    ));
-}
-
-fn append_player_aim_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
-    rows.push(row(
-        DebugSection::Raycast,
-        "Player-aim query",
-        if data.player_aim_query_available {
-            format!(
-                "active / {}",
-                if data.player_aim_query_state_present {
-                    "result state present"
-                } else {
-                    "no result state"
-                }
-            )
-        } else {
-            "unavailable".to_owned()
-        },
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Player-aim filtered fraction",
-        data.player_aim_hit_fraction.map_or_else(
-            || {
-                if !data.player_aim_query_available {
-                    "unavailable".to_owned()
-                } else {
-                    "no hit".to_owned()
-                }
-            },
-            |value| {
-                if value >= 1.0 {
-                    "no hit".to_owned()
-                } else {
-                    format_fixed(f64::from(value))
-                }
-            },
-        ),
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Player-aim filtered position",
-        data.player_aim_candidate_position.map_or_else(
-            || {
-                if !data.player_aim_query_available {
-                    "unavailable".to_owned()
-                } else {
-                    "no hit".to_owned()
-                }
-            },
-            |position| format_vector(Some(position)),
-        ),
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Player-aim hit shape",
-        format_raycast_candidate_shape(
-            data.player_aim_candidate_shape,
-            data.player_aim_query_available,
-            data.player_aim_hit_fraction,
-        ),
-    ));
-}
-
-fn append_ignore_actor_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ignore characters/vehicles query",
-        if data.ignore_characters_vehicles_query_available {
-            if data.ignore_characters_vehicles_query_state_present {
-                "active / result state present".to_owned()
-            } else {
-                "active / no result state".to_owned()
-            }
-        } else {
-            "unavailable".to_owned()
-        },
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ignore characters/vehicles fraction",
-        data.ignore_characters_vehicles_hit_fraction.map_or_else(
-            || {
-                if data.ignore_characters_vehicles_query_available {
-                    "no hit".to_owned()
-                } else {
-                    "unavailable".to_owned()
-                }
-            },
-            |value| {
-                if value >= 1.0 {
-                    "no hit".to_owned()
-                } else {
-                    format_fixed(f64::from(value))
-                }
-            },
-        ),
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ignore characters/vehicles position",
-        data.ignore_characters_vehicles_candidate_position
-            .map_or_else(
-                || {
-                    if data.ignore_characters_vehicles_query_available {
-                        "no hit".to_owned()
-                    } else {
-                        "unavailable".to_owned()
-                    }
-                },
-                |position| format_vector(Some(position)),
-            ),
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ignore characters/vehicles hit shape",
-        format_raycast_candidate_shape(
-            data.ignore_characters_vehicles_candidate_shape,
-            data.ignore_characters_vehicles_query_available,
-            data.ignore_characters_vehicles_hit_fraction,
-        ),
-    ));
-}
-
-fn append_ignore_owner_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ignore-player-owner query",
-        if data.ignore_player_owner_query_available {
-            if data.ignore_player_owner_query_state_present {
-                "active / result state present".to_owned()
-            } else {
-                "active / no result state".to_owned()
-            }
-        } else {
-            "unavailable".to_owned()
-        },
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ignore-player-owner fraction",
-        data.ignore_player_owner_hit_fraction.map_or_else(
-            || {
-                if data.ignore_player_owner_query_available {
-                    "no hit".to_owned()
-                } else {
-                    "unavailable".to_owned()
-                }
-            },
-            |value| {
-                if value >= 1.0 {
-                    "no hit".to_owned()
-                } else {
-                    format_fixed(f64::from(value))
-                }
-            },
-        ),
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ignore-player-owner position",
-        data.ignore_player_owner_candidate_position.map_or_else(
-            || {
-                if data.ignore_player_owner_query_available {
-                    "no hit".to_owned()
-                } else {
-                    "unavailable".to_owned()
-                }
-            },
-            |position| format_vector(Some(position)),
-        ),
-    ));
-    rows.push(row(
-        DebugSection::Raycast,
-        "Ignore-player-owner hit shape",
-        format_raycast_candidate_shape(
-            data.ignore_player_owner_candidate_shape,
-            data.ignore_player_owner_query_available,
-            data.ignore_player_owner_hit_fraction,
-        ),
+        "Hit position",
+        format_vector(data.raycast_hit_position),
     ));
 }
 
@@ -456,26 +195,22 @@ fn row(section: DebugSection, label: &'static str, value: String) -> Presentatio
     }
 }
 
-fn format_raycast_candidate_shape(
-    shape: Option<RaycastCandidateShape>,
-    query_available: bool,
-    hit_fraction: Option<f32>,
-) -> String {
-    let Some(shape) = shape else {
-        if !query_available {
-            return "unavailable".to_owned();
-        }
-        return if hit_fraction.is_some_and(|fraction| fraction >= 1.0) {
-            "no hit".to_owned()
-        } else {
-            "unknown".to_owned()
+#[cfg(test)]
+mod raycast_filter_comparison_tests {
+    use super::*;
+
+    #[test]
+    fn raycast_section_displays_only_the_latest_hit_position() {
+        let snapshot = GameSnapshot {
+            raycast_hit_position: Some([4.0, 5.0, 6.0]),
+            ..GameSnapshot::default()
         };
-    };
-    let height_field_vtable = STEAM_IMAGE_BASE + C_CUSTOM_SAMPLED_HEIGHT_FIELD_SHAPE_VFTABLE_RVA;
-    let kind = if shape.vtable == height_field_vtable {
-        "sampled heightfield terrain"
-    } else {
-        "unknown shape"
-    };
-    format!("{kind} 0x{:X} (vtable 0x{:X})", shape.address, shape.vtable)
+        let mut rows = Vec::new();
+
+        append_reticle_query_rows(&snapshot, &mut rows);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "Hit position");
+        assert_eq!(rows[0].value, "4.000, 5.000, 6.000");
+    }
 }

@@ -35,6 +35,7 @@ pub fn create_game_app() -> App {
     app.init_resource::<crate::devtools::state::PendingUiInput>();
     app.init_resource::<crate::api::scripts::manager::ScriptManager>();
     app.init_resource::<super::script_dispatch::PendingScriptDebugDraws>();
+    app.init_resource::<super::script_dispatch::PendingScriptRaycasts>();
     app.init_resource::<RuntimeDiagnostics>();
     app.add_systems(
         MadMaxPostSim,

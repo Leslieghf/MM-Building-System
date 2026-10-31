@@ -22,6 +22,9 @@ pub(super) fn invoke(
     debug_capacity: usize,
     debug_work_capacity: usize,
     debug_effects: &mut Vec<ScriptDebugDrawEffect>,
+    raycast_capacity: bool,
+    raycast_tickets: RaycastTicketStore,
+    raycast_effects: &mut Vec<ScriptRaycastRequest>,
 ) {
     let event = build_event(request_id, id, script, function);
     if script.status != ScriptStatus::Active {
@@ -42,16 +45,25 @@ pub(super) fn invoke(
         debug_capacity.min(MAX_DEBUG_DRAWS_PER_INVOCATION),
         debug_work_capacity.min(MAX_DEBUG_DRAW_WORK_PER_INVOCATION),
     );
-    let context = GamePostSimContext::new(
+    let raycast = InvocationRaycast::new(
+        script.capabilities.iter().any(|id| id == "game.raycast"),
+        raycast_capacity,
+        event.clone(),
+        snapshot.callback_sequence,
+        raycast_tickets.clone(),
+    );
+    let context = GamePostSimContext::new_with_raycast(
         snapshot,
         log.clone(),
         &script.capabilities,
         write.clone(),
+        raycast.clone(),
         debug.clone(),
     );
     let result = run_callback(engine, script, function, context);
     log.finish();
     let velocity_effect = write.finish();
+    let raycast_request = raycast.finish();
     let debug_primitives = debug.finish();
     if let Some(failure) = callback_failure(script, &result) {
         report_callback_failure(sink, script, event, failure);
@@ -63,8 +75,11 @@ pub(super) fn invoke(
             script.status,
             velocity_effect,
             debug_primitives,
+            raycast_request,
+            raycast_tickets,
             effects,
             debug_effects,
+            raycast_effects,
         );
     }
 }
@@ -172,8 +187,11 @@ fn publish_callback_effects(
     status: ScriptStatus,
     velocity: Option<[f32; 3]>,
     primitives: Vec<DebugPrimitive>,
+    raycast_request: Option<ScriptRaycastRequest>,
+    raycast_tickets: RaycastTicketStore,
     effects: &mut Vec<VehicleVelocityEffect>,
     debug_effects: &mut Vec<ScriptDebugDrawEffect>,
+    raycast_effects: &mut Vec<ScriptRaycastRequest>,
 ) {
     if let Some(velocity) = velocity {
         let mut origin = event.clone();
@@ -187,6 +205,26 @@ fn publish_callback_effects(
             primitive,
             origin: event.clone(),
         });
+    }
+    if let Some(request) = raycast_request {
+        if raycast_tickets.insert_pending(&request) {
+            if raycast_effects.len() < super::MAX_RAYCAST_REQUESTS_PER_PHASE {
+                raycast_effects.push(request);
+            } else {
+                raycast_tickets.complete(ScriptRaycastCompletion {
+                    ticket: request.ticket,
+                    source: request.source,
+                    available: false,
+                    state_present: false,
+                    fraction: None,
+                    hit_position: None,
+                });
+            }
+        } else {
+            event.kind = ScriptEventKind::Error;
+            event.text = "raycast ticket store full; request was discarded".to_owned();
+            sink.emit(event.clone());
+        }
     }
     if request_id.is_some() {
         event.kind = ScriptEventKind::Status;

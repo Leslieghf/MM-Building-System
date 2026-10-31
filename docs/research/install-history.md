@@ -1,3 +1,9 @@
+## Current state — 2026-10-31 same-ray filter comparison probe installed
+
+- Installed the corrected Windows MSVC release build as `scripts\MadMaxModding.asi`, SHA-256 `9B765EDA22775E733DDD5806D97DA9A422F8B862C341C1A88E3E91FD3D50B953` (11,235,328 bytes). The pre-probe ASI is preserved as `scripts\MadMaxModding.asi.before-ray-filter-ab-20261031`, SHA-256 `900B249F2F1F25EDF64815C5D0AD2C84525E07085D01D626DA441DD4BAE0736D`. Superseded probe builds are preserved as `MadMaxModding.asi.before-ray-orientation-correction-20261031` (SHA-256 `EFA3BC532CC88859EF6D98E03E25389FA283107A591AED4882CF0C1B30301CEA`) and `MadMaxModding.asi.before-vtable-readability-check-20261031` (SHA-256 `E7D7FEF326144FEC10F8C3CAA5A75E7F8B5B141946DFF2F7054A90F1C14FE047`).
+- The temporary ray starts 10 units to Max's left and 5 units above him, then travels right and down through his position. That exact ray is queried through `CStaticOnlyRaycastFilter` (mask 3) and `CPlayerAimRaycastFilter` (no extra mask write); each has separate status, hit fraction, hit position, and shape readouts. This is an in-game comparison probe, not a stable scripting API.
+- Mad Max was confirmed closed before replacement and has not been launched with this build. `cargo fmt --check`, `cargo test --target x86_64-pc-windows-msvc --locked` (82 passed), and `cargo build --target x86_64-pc-windows-msvc --release --locked` passed. Existing dead-code warnings remain for disabled capture taps.
+
 ## Current state — 2026-10-31 stable semantic gizmo set deployed
 
 Kept the distinct wire variants and the two solid forms the user requested. Rhai now exposes semantic names only; old native-name aliases and duplicate solid-shape routes 37/39 are removed from the live script/native dispatch path. The solid cube uses slot 36 and the solid 3D arrow uses slot 38. Research retains the complete 36–39 Havok type mapping. `debug_gizmo` was refreshed to show each retained visual without duplicate axis lines.
@@ -281,3 +287,59 @@ The user visually confirmed that actor transforms render row 0 red/right, row 1 
 - Prior API backup: `MadMaxModding\\API.md.before-actor-forward-fix-20261030-134325`.
 - `debug_orientation` script hash: `1DBF9B69C9EFFACCF083DB2F0EBA01B83A643F46832A0FD5A44B3DF93ADE24CB`.
 - Verification: all 30 Rust tests passed; release build, `cargo fmt --all -- --check`, and `git diff --check` passed. The corrected forward direction awaits in-game confirmation.
+## 2026-10-31 — single reticle-ray script diagnostic
+
+Reduced the mod-issued reticle sampling pass to one query using the selected `CStaticOnlyRaycastFilter` configuration. The previous player-aim, ignore-actors, and ignore-player query variants are no longer issued by this probe and were removed from the visible Raycast panel to keep the test focused. Added read-only `ctx.raycast` fields (`available`, `state_present`, `origin`, `direction`, `hit_fraction`, `hit_position`, and `has_hit`) and a discoverable `reticle_ray` script. The script draws a thin 3D wire arrow along the copied camera ray, ending at the candidate position when present; otherwise it draws a 50-unit direction preview. The latter is a visualization length, not the query's maximum distance.
+
+- Installed ASI SHA-256: `5A5ACA0481CE9E2B7B47E98E68E1C4F2202E84A9F6EB5DA6E5ECBA13F8019C4A`; prior ASI backup: `scripts\MadMaxModding.asi.before-reticle-ray-20261031`.
+- Installed API SHA-256: `690016D9C67AE49516C1F86CB69EC84ADFD6CCD128B0BEEDDECCD9BBF34A746A`; prior copy: `MadMaxModding\API.md.before-reticle-ray-20261031`.
+- Installed `reticle_ray` package hashes match the repository: `manifest.toml` `C9DC179751E97B330E20F59413E3B38A24A50BCD772CCB76B53F65AF1FCC0EAB`; `main.rhai` `EF71B5676BD88039C346B057CE5BB240AF5F12B4AA9D8C9EE8274C6DD665DF64`.
+- Verification: `cargo fmt --all -- --check`, all 80 Rust tests, `cargo build --release --locked`, and `git diff --check` passed. Existing dead-code warnings remain for disabled world-query diagnostic hooks.
+- Mad Max was confirmed closed before install and was not launched; in-game appearance and hit behavior await user check.
+
+## 2026-10-31 — ray-origin and direction-sign visual discriminator
+
+Updated only the `reticle_ray` Rhai package while Mad Max remained open; the ASI and native query path were not changed. The script still issues one native query. It now marks the copied ray origin in cyan, the copied player position in yellow, and draws a short magenta arrow along the opposite of the queried direction as a visual sign reference. This distinguishes an origin offset from a direction-sign problem without adding another query.
+
+- The previous installed script is preserved as `MadMaxModding\scripts\reticle_ray\main.rhai.before-ray-origin-sign-diagnostic-20261031`.
+- Installed script SHA-256: `113C31105D9D5EC3A2A154E64A7F6598BFD0BACC07C4DA40CF3DAFEE5F4F107F`.
+- The Rhai callback test passed for both hit and miss cases, with line counts updated for the new markers and opposite-direction reference. Mad Max is running; the updated package still needs to be reloaded and visually checked.
+
+## 2026-10-31 — player-relative right/down ray probe
+
+Replaced the camera-derived ray input with a controlled diagnostic ray built from Max's copied actor transform. Its origin is 10 world units along Max's horizontal forward direction and 5 units above his transform position. Its normalized direction is 45 degrees toward actor-right and world-down. It continues to issue exactly one `CStaticOnlyRaycastFilter` query, keeping query/filter behavior fixed while removing camera-matrix interpretation from this test. The `reticle_ray` script marks the player position and ray origin, then draws the ray and optional hit marker.
+
+- Installed ASI SHA-256: `900B249F2F1F25EDF64815C5D0AD2C84525E07085D01D626DA441DD4BAE0736D`; previous ASI preserved as `scripts\MadMaxModding.asi.before-player-relative-ray-20261031` (SHA-256 `5A5ACA0481CE9E2B7B47E98E68E1C4F2202E84A9F6EB5DA6E5ECBA13F8019C4A`).
+- Installed API SHA-256: `592DE97E6AA852477BDEBE20480DAF0507935F4707F3CF67C703089819BCE1A0`; previous copy preserved as `MadMaxModding\API.md.before-player-relative-ray-20261031` (SHA-256 `690016D9C67AE49516C1F86CB69EC84ADFD6CCD128B0BEEDDECCD9BBF34A746A`).
+- Installed script SHA-256: `36749401A2A34A6A833B75F59376BA7591BDF61A28CEEE96FC3BE6C784399459`; previous copy preserved as `MadMaxModding\scripts\reticle_ray\main.rhai.before-player-relative-ray-20261031` (SHA-256 `113C31105D9D5EC3A2A154E64A7F6598BFD0BACC07C4DA40CF3DAFEE5F4F107F`).
+- Verification at install: all 81 Rust tests passed; release build, format check, and `git diff --check` passed. Mad Max was closed for installation. The user then launched the game, tested the installed controlled ray, and reported that it “works perfectly.” The exact filter behavior for rays crossing Max remains unverified.
+
+## 2026-10-31 — general Rhai raycast API and camera reticle
+
+Installed the general-purpose deferred raycast API and camera-driven `reticle_ray` consumer while Mad Max was closed. Rhai scripts can request a world ray with copied origin/direction, range, and the named `static_only` or `player_aim` profile, then read generation-scoped copied ticket results on a later callback. Requests are bounded to one per script callback and eight native queries per game callback. The debug Raycast section contains only the optional `Hit position` row; the example draws no additional geometry.
+
+- Installed ASI: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding.asi`
+- ASI SHA-256: `24BD2BC2AC4A92F77E1C63920141D2EAFB3077BD66477D4CA1DC69459298D5C1` (11,335,168 bytes; source artifact `target\x86_64-pc-windows-msvc\release\madmax_bootstrap.dll`)
+- Previous ASI SHA-256: `93C389513B4930BB368BE54D82326554887F42FC367F45CC4E313B856F9CA959`
+- Backup directory: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\MadMaxModding\backups\general-raycast-20261031-044822`
+- Installed `API.md` SHA-256: `1618573FD3CF1FF7019B12A0C4C22129687C834AB039E875776264D9CBFFC912`; it matches `docs\rhai-api.md`.
+- Installed `reticle_ray\manifest.toml` SHA-256: `4053F403F6D6621D662825107A823BFA62986BE5D93279E31719F46DA89F32D7`.
+- Installed `reticle_ray\main.rhai` SHA-256: `8A2DE18E17036EBFB4AFFD65D542899964B3B844EE1326CB4A678EBD7D5FADD6`.
+- Verification: `cargo fmt --all -- --check`, `cargo check --target x86_64-pc-windows-msvc --locked`, and `cargo build --release --target x86_64-pc-windows-msvc --locked` completed; deployed hashes match source/build hashes. Existing warnings concern unused world-query capture hooks. No game launch was performed; camera-direction sign, in-game script loading, and hit behavior remain unverified pending user check.
+
+## 2026-10-31 — oversized reticle-hit gizmo cluster
+
+Updated only the `reticle_ray` package and generated API reference; the ASI was not changed. The script keeps `game.raycast` data-only and separately requests the `debug.draw` capability. On a completed hit it places a large cluster at the reported hit position: 24-unit RGB axes, red radius-1 wire sphere, magenta radius-3 x-ray sphere, cyan radius-6 surface-wire sphere, yellow 16-unit-wide wire box, and a white 16-unit upward arrow. The debug panel remains one `Hit position` row.
+
+- Backup directory: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\MadMaxModding\backups\reticle-hit-gizmos-20261031-045851`.
+- Installed `API.md` SHA-256: `B459A25913E699480A2B638777B9F47647F6EE04CE73CA56CBD102A1CC971F90`.
+- Installed `reticle_ray\manifest.toml` SHA-256: `648456D63926CD265CA3836E8843F12F14E6FBBD9E1C74D22D3CCA14B0A4E5F1`.
+- Installed `reticle_ray\main.rhai` SHA-256: `7AC8BF29ABFE3D5D3C9D313FC38931827292E423879CB0B34FEFEBC305B34BCB`.
+- `cargo fmt --all` and the Windows-target `cargo check --locked` completed. Mad Max was closed for the file replacement; the updated Rhai package still needs to be loaded in-game and visually checked.
+
+## 2026-10-31 — camera-basis sign diagnostic
+
+Kept the existing single ray and hit-marker cluster, and added a camera-origin marker plus two short arrows: green follows the submitted camera direction, magenta follows its negation. This isolates camera-axis/sign geometry from filter selection and hit-point reconstruction. Only the hot-reloadable Rhai script changed; the ASI was not replaced. The previous installed script is preserved as `MadMaxModding\scripts\reticle_ray\main.rhai.before-camera-basis-diagnostic-20261031`.
+
+- Installed script SHA-256: `BB218C353A312FD8161CCB9CC09FB3A4A22710650620D159F01FCEBADDF96D77` (matches `examples\scripts\reticle_ray\main.rhai`).
+- Mad Max remained open. The visible direction comparison awaits user observation; no game launch or process modification was performed.

@@ -53,18 +53,20 @@ pub(in crate::api::game::native) fn probe_player_transform(player: *mut Characte
     let rotation = rotation_xyz_degrees(&transform);
     let camera_matrix = sample_camera_matrix();
     let view_rotation = camera_matrix.as_ref().and_then(rotation_xyz_degrees);
-    let reticle_ray_sample = camera_matrix
-        .as_ref()
-        .and_then(|matrix| sample_reticle_ray_if_due(matrix, player));
     publish_player_sample(10, Some(position), rotation, view_rotation);
-    if let Some(sample) = reticle_ray_sample {
-        publish_reticle_sample(sample);
-    }
     let mut player_sample = PLAYER_SAMPLE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     player_sample.transform = Some(transform);
     player_sample.forward = horizontal_forward(&transform);
+    player_sample.camera_position = camera_matrix
+        .as_ref()
+        .map(|matrix| matrix.translation())
+        .map(|position| [position.x, position.y, position.z]);
+    player_sample.camera_direction = camera_matrix
+        .as_ref()
+        .and_then(WorldQueryRayInput::from_camera_matrix)
+        .map(|ray| [ray.direction.x, ray.direction.y, ray.direction.z]);
 }
 
 fn read_player_transform(player: *mut Character) -> Result<Matrix4x4, u8> {
@@ -103,38 +105,6 @@ fn read_player_transform(player: *mut Character) -> Result<Matrix4x4, u8> {
         .all(|coordinate| coordinate.is_finite())
         .then_some(transform)
         .ok_or(9)
-}
-
-fn publish_reticle_sample(sample: ReticleRaySample) {
-    let mut player = PLAYER_SAMPLE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    player.reticle_ray_origin = sample.origin;
-    player.reticle_ray_direction = sample.direction;
-    player.reticle_query_available = sample.query_available;
-    player.reticle_query_state_present = sample.query_state_present;
-    player.reticle_hit_fraction = sample.fraction;
-    player.reticle_candidate_position = sample.candidate_position;
-    player.reticle_candidate_shape = sample.candidate_shape;
-    player.player_aim_query_available = sample.player_aim_query_available;
-    player.player_aim_query_state_present = sample.player_aim_query_state_present;
-    player.player_aim_hit_fraction = sample.player_aim_fraction;
-    player.player_aim_candidate_position = sample.player_aim_candidate_position;
-    player.player_aim_candidate_shape = sample.player_aim_candidate_shape;
-    player.ignore_characters_vehicles_query_available =
-        sample.ignore_characters_vehicles_query_available;
-    player.ignore_characters_vehicles_query_state_present =
-        sample.ignore_characters_vehicles_query_state_present;
-    player.ignore_characters_vehicles_hit_fraction = sample.ignore_characters_vehicles_fraction;
-    player.ignore_characters_vehicles_candidate_position =
-        sample.ignore_characters_vehicles_candidate_position;
-    player.ignore_characters_vehicles_candidate_shape =
-        sample.ignore_characters_vehicles_candidate_shape;
-    player.ignore_player_owner_query_available = sample.ignore_player_owner_query_available;
-    player.ignore_player_owner_query_state_present = sample.ignore_player_owner_query_state_present;
-    player.ignore_player_owner_fraction = sample.ignore_player_owner_fraction;
-    player.ignore_player_owner_candidate_position = sample.ignore_player_owner_candidate_position;
-    player.ignore_player_owner_candidate_shape = sample.ignore_player_owner_candidate_shape;
 }
 
 pub(in crate::api::game::native) fn sample_vehicle(

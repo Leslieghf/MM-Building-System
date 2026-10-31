@@ -348,18 +348,22 @@ pub struct SampledHeightFieldRaycastOutput {
 
 /// Raw 0x50-byte output written by `WorldQueryHelper`.
 ///
-/// Field names describe observed storage, not universal gameplay semantics.
-/// `scalar_14` is consumed as a segment fraction by the sampled
-/// `CAmmunition::CheckCollisions` and `GraphScriptRaycastStatic` callers: values
-/// below 1 select caller-specific result handling, and captured values match
-/// the minimum candidate fraction. Other callers may assign it different
-/// semantics. Pointer fields have no recovered Rust-side pointee types.
+/// `surface_normal` and `hit_fraction` are copied by WorldQueryHelper from the
+/// accepted ray-hit collector's `+0x10..+0x20` hit record. The public Havok
+/// `hkpWorldRayCastOutput` layout identifies those fields as normal and hit
+/// fraction; Mad Max's in-binary collector layout is independently consistent
+/// with that mapping. `hit_fraction` is also consumed as a segment fraction by
+/// the sampled `CAmmunition::CheckCollisions` and `GraphScriptRaycastStatic`
+/// callers. A world-space hit point is reconstructed as
+/// `origin + direction * (segment_length * hit_fraction)`; this is exactly what
+/// the game-owned `GetRayWorldPosition` caller does. Pointer fields have no
+/// recovered Rust-side pointee types.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct WorldQueryOutputRecord {
     pub qword_00: u64,
-    pub vector_08: Vector3,
-    pub scalar_14: f32,
+    pub surface_normal: Vector3,
+    pub hit_fraction: f32,
     pub qword_18: u64,
     pub qword_20: u64,
     pub qword_28: u64,
@@ -381,8 +385,9 @@ pub const WORLD_QUERY_CONTEXT_RESULT_STATE_POINTER_OFFSET: usize = 0x60;
 /// copied by WorldQueryHelper.
 pub const WORLD_QUERY_CONTEXT_CLOSEST_HIT_FRACTION_OFFSET: usize = 0x08;
 /// Float initialized to 1.0 and copied by WorldQueryHelper to
-/// WorldQueryOutputRecord::scalar_14. Its precise writer and relationship to
-/// the closest-hit bound at +0x08 remain unresolved.
+/// WorldQueryOutputRecord::hit_fraction. The collector hit callback's exact
+/// relationship between this hit record and the closest-hit bound at +0x08
+/// remains unresolved.
 pub const WORLD_QUERY_CONTEXT_EXPORTED_FRACTION_OFFSET: usize = 0x20;
 /// Accepted leaf-shape pointer written by the shared CRaycastFilter hit
 /// callback after a closer accepted candidate is found.

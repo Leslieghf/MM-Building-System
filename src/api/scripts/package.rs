@@ -187,6 +187,25 @@ mod tests {
         .expect("debug_orientation should compile against the current script API");
         assert_eq!(prepared.manifest().id, "debug_orientation");
     }
+
+    #[test]
+    fn reticle_ray_example_manifest_and_rhai_compile() {
+        let manifest: ScriptManifest = toml::from_str(include_str!(
+            "../../../examples/scripts/reticle_ray/manifest.toml"
+        ))
+        .expect("reticle_ray manifest should parse");
+        let id = ScriptId::parse("reticle_ray").expect("example ID should be valid");
+        let prepared = PreparedScript::compile_package(
+            0,
+            id,
+            manifest,
+            include_str!("../../../examples/scripts/reticle_ray/main.rhai"),
+            true,
+            RhaiEngineFactory,
+        )
+        .expect("reticle_ray should compile against the current script API");
+        assert_eq!(prepared.manifest().id, "reticle_ray");
+    }
 }
 
 /// Compiled package candidate ready for callback-boundary activation.

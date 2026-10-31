@@ -85,8 +85,6 @@ pub(super) const CHARACTER_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 pub(super) const VEHICLE_TO_GAME_OBJECT_OFFSET: usize = 0x8;
 pub(super) const HOOK_TIMEOUT: Duration = Duration::from_secs(120);
 pub(super) const GAME_STATE_SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
-pub(super) const RETICLE_RAY_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
-pub(super) const RETICLE_RAY_MAX_DISTANCE: f32 = 500.0;
 pub(super) const PLAYER_SAMPLE_MAX_AGE: Duration = Duration::from_secs(1);
 pub(super) const CALLBACK_STABLE_STREAK_REQUIRED: u32 = 60;
 // The observed helper has dozens of call sites. Keep a fixed, allocation-free

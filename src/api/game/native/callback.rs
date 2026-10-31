@@ -67,9 +67,20 @@ fn run_game_runtime_frame(snapshot: GameSnapshot, overlap_epoch: u64) {
             return;
         };
         apply_pending_game_effect(runtime, snapshot, overlap_epoch);
+        submit_script_raycast_requests(runtime, overlap_epoch);
         submit_script_debug_draws(runtime, overlap_epoch);
         trace_game_runtime_stage(5, "Bevy post-simulation schedule returned");
     });
+}
+
+fn submit_script_raycast_requests(runtime: &mut GameRuntime, epoch: u64) {
+    for request in runtime.take_script_raycast_requests() {
+        if !callback_is_current(epoch) {
+            break;
+        }
+        let result = execute_script_raycast(request);
+        runtime.complete_script_raycast(result);
+    }
 }
 
 fn apply_pending_game_effect(runtime: &mut GameRuntime, snapshot: GameSnapshot, epoch: u64) {

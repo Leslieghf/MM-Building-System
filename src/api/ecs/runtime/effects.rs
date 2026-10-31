@@ -19,6 +19,28 @@ impl GameRuntime {
         )
     }
 
+    pub(crate) fn take_script_raycast_requests(
+        &mut self,
+    ) -> Vec<crate::api::scripts::ScriptRaycastRequest> {
+        std::mem::take(
+            &mut self
+                .app
+                .world_mut()
+                .resource_mut::<crate::api::ecs::systems::script_dispatch::PendingScriptRaycasts>()
+                .0,
+        )
+    }
+
+    pub(crate) fn complete_script_raycast(
+        &mut self,
+        result: crate::api::scripts::ScriptRaycastCompletion,
+    ) -> bool {
+        self.app
+            .world_mut()
+            .resource_mut::<crate::api::scripts::manager::ScriptManager>()
+            .complete_script_raycast(result)
+    }
+
     pub(crate) fn complete_spawn_intent(
         &mut self,
         pending: PendingSpawnIntent,

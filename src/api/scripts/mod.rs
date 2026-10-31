@@ -159,6 +159,52 @@ pub struct ScriptEvent {
     /// UTF-8 message, truncated to [`MAX_EVENT_BYTES`] at emission.
     pub text: String,
 }
+
+/// Named native query configuration accepted by the Rhai raycast API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptRaycastFilter {
+    /// Mapped static-only filter with its known category mask.
+    StaticOnly,
+    /// Mapped player-aim candidate predicate.
+    PlayerAim,
+}
+
+/// Owned ray request emitted by a successful script callback.
+#[derive(Debug, Clone)]
+pub struct ScriptRaycastRequest {
+    /// Ticket returned to the requesting script.
+    pub ticket: u64,
+    /// World-space ray origin.
+    pub origin: [f32; 3],
+    /// Normalized world-space direction.
+    pub direction: [f32; 3],
+    /// Maximum query distance in world units.
+    pub max_distance: f32,
+    /// Verified filter profile selected by the script.
+    pub filter: ScriptRaycastFilter,
+    /// Script and generation attribution for lifecycle checks.
+    pub source: ScriptEvent,
+    /// Callback sequence after which the ticket expires.
+    pub expires_at: u64,
+}
+
+/// Copied completion for one native ray request.
+#[derive(Debug, Clone)]
+pub struct ScriptRaycastCompletion {
+    /// Ticket associated with the request.
+    pub ticket: u64,
+    /// Original script generation.
+    pub source: ScriptEvent,
+    /// Whether the native query API was available and called.
+    pub available: bool,
+    /// Whether the game helper reported a query state.
+    pub state_present: bool,
+    /// Optional caller-observed segment fraction.
+    pub fraction: Option<f32>,
+    /// Optional reconstructed world-space hit position.
+    pub hit_position: Option<[f32; 3]>,
+}
+
 /// Bounded publisher for script-host events.
 #[derive(Clone)]
 pub struct ScriptEventSink(pub console::ConsoleEventSink);

@@ -17,7 +17,8 @@ mod invocation;
 use super::{engine::RhaiEngineFactory, *};
 use crate::api::ecs::GameSnapshot;
 use crate::api::rhai::bindings::{
-    DebugPrimitive, GamePostSimContext, InvocationDebugDraw, InvocationLog, InvocationVehicleWrite,
+    DebugPrimitive, GamePostSimContext, InvocationDebugDraw, InvocationLog, InvocationRaycast,
+    InvocationVehicleWrite, RaycastTicketStore,
 };
 use bevy_ecs::prelude::Resource;
 use rhai::{AST, CallFnOptions, Dynamic, Engine, Map, Scope};
@@ -41,6 +42,8 @@ pub const MAX_DEBUG_DRAWS_PER_PHASE: usize = 128;
 pub const MAX_DEBUG_DRAW_WORK_PER_INVOCATION: usize = 256;
 /// Maximum estimated geometry work accepted in one phase.
 pub const MAX_DEBUG_DRAW_WORK_PER_PHASE: usize = 512;
+/// Maximum native ray queries dispatched from scripts in one game callback.
+pub const MAX_RAYCAST_REQUESTS_PER_PHASE: usize = 8;
 /// Limit outstanding effects too: the native adapter drains one intent per callback.
 pub const MAX_PENDING_VELOCITY_EFFECTS: usize = 32;
 pub(crate) struct VehicleVelocityEffect {
@@ -120,6 +123,7 @@ pub struct ScriptManager {
     last_load_request_id: u64,
     load_requests: BTreeMap<ScriptId, PendingLoad>,
     events: ScriptEventSink,
+    raycast_tickets: RaycastTicketStore,
 }
 impl Default for ScriptManager {
     fn default() -> Self {
@@ -140,6 +144,7 @@ impl ScriptManager {
             last_load_request_id: 0,
             load_requests: BTreeMap::new(),
             events,
+            raycast_tickets: RaycastTicketStore::default(),
         }
     }
     fn stage(&mut self, change: PendingChange) -> Result<(), &'static str> {
@@ -638,6 +643,7 @@ impl ScriptManager {
         generation: ScriptGeneration,
     ) {
         self.cancel_runs(&id);
+        self.raycast_tickets.remove_owner(&id);
         let mut scope = Scope::new();
         scope.push("state", Map::new());
         let auto_reload = self
@@ -678,6 +684,7 @@ impl ScriptManager {
 
     fn unload_script(&mut self, id: ScriptId, request_id: Option<u64>) {
         self.cancel_runs(&id);
+        self.raycast_tickets.remove_owner(&id);
         let generation = self
             .active
             .remove(&id)
@@ -774,14 +781,53 @@ impl ScriptManager {
         &mut self,
         snapshot: GameSnapshot,
         available_slots: usize,
-    ) -> (Vec<VehicleVelocityEffect>, Vec<ScriptDebugDrawEffect>) {
+    ) -> (
+        Vec<VehicleVelocityEffect>,
+        Vec<ScriptDebugDrawEffect>,
+        Vec<ScriptRaycastRequest>,
+    ) {
         let mut effects = Vec::new();
         let mut debug_draws: Vec<ScriptDebugDrawEffect> = Vec::new();
+        let mut raycasts = Vec::new();
+        self.raycast_tickets.expire(snapshot.callback_sequence);
         let capacity = available_slots.min(MAX_VELOCITY_EFFECTS_PER_PHASE);
-        self.dispatch_queued_runs(snapshot, capacity, &mut effects, &mut debug_draws);
-        self.dispatch_frame_callbacks(snapshot, capacity, &mut effects, &mut debug_draws);
+        self.dispatch_queued_runs(
+            snapshot,
+            capacity,
+            &mut effects,
+            &mut debug_draws,
+            &mut raycasts,
+        );
+        self.dispatch_frame_callbacks(
+            snapshot,
+            capacity,
+            &mut effects,
+            &mut debug_draws,
+            &mut raycasts,
+        );
         self.retain_current_effects(&mut effects, &mut debug_draws);
-        (effects, debug_draws)
+        raycasts.retain(|request| {
+            if self.effect_is_current(&request.source) {
+                true
+            } else {
+                self.raycast_tickets.remove_ticket(request.ticket);
+                self.report_effect_cancelled(request.source.clone());
+                false
+            }
+        });
+        (effects, debug_draws, raycasts)
+    }
+
+    pub(crate) fn complete_script_raycast(&mut self, result: ScriptRaycastCompletion) -> bool {
+        if !self.effect_is_current(&result.source) {
+            self.report_effect_cancelled(result.source);
+            return false;
+        }
+        self.raycast_tickets.complete(result)
+    }
+
+    pub(crate) fn latest_reticle_hit_position(&self) -> Option<Option<[f32; 3]>> {
+        self.raycast_tickets.latest_result_for("reticle_ray")
     }
 
     fn dispatch_queued_runs(
@@ -790,11 +836,13 @@ impl ScriptManager {
         capacity: usize,
         effects: &mut Vec<VehicleVelocityEffect>,
         debug_draws: &mut Vec<ScriptDebugDrawEffect>,
+        raycasts: &mut Vec<ScriptRaycastRequest>,
     ) {
         let mut runs = std::mem::take(&mut self.runs);
         runs.sort_by(|a, b| a.0.cmp(&b.0));
         let engine = &self.engine;
         let events = &self.events;
+        let raycast_tickets = self.raycast_tickets.clone();
         // One-shot requests run before recurring callbacks; duplicate requests remain distinct.
         for (id, generation, request_id) in runs {
             let Some(script) = self.active.get_mut(&id) else {
@@ -819,6 +867,9 @@ impl ScriptManager {
                 remaining_debug_draws(debug_draws),
                 remaining_debug_work(debug_draws),
                 debug_draws,
+                raycast_tickets.has_capacity(),
+                raycast_tickets.clone(),
+                raycasts,
             );
         }
     }
@@ -829,9 +880,11 @@ impl ScriptManager {
         capacity: usize,
         effects: &mut Vec<VehicleVelocityEffect>,
         debug_draws: &mut Vec<ScriptDebugDrawEffect>,
+        raycasts: &mut Vec<ScriptRaycastRequest>,
     ) {
         let engine = &self.engine;
         let events = &self.events;
+        let raycast_tickets = self.raycast_tickets.clone();
         for (id, script) in &mut self.active {
             let Some(function) = script.callbacks.get(&ScriptPhaseId::GamePostSim).cloned() else {
                 continue;
@@ -849,6 +902,9 @@ impl ScriptManager {
                 remaining_debug_draws(debug_draws),
                 remaining_debug_work(debug_draws),
                 debug_draws,
+                raycast_tickets.has_capacity(),
+                raycast_tickets.clone(),
+                raycasts,
             );
         }
     }

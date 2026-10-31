@@ -62,6 +62,7 @@ RTTI identifies the vtable at RVA 0x0123D6A8; its predicate is RVA 0x02039DB0. T
 - The predicate accepts when one of those mapped bits overlaps the filter mask.
 - If the candidate's shape/subobject exists, its byte at +0x160 must equal 5.
 - A successful owner-associated interface/tag query rejects the candidate.
+- The predicate does not explicitly compare the candidate owner with the player. Its owner-associated check is a separate tag/interface test, so this filter is not a demonstrated player-ignore filter.
 - The meanings of the shape byte and the interface/tag are not yet named.
 
 Despite the class name, the recovered logic should not be summarized as terrain only. The caller's mask and additional shape/owner conditions matter.
@@ -81,6 +82,18 @@ Known callers build and normalize the six-float input before calling. This is a 
 ### ProcessStaticCameraCollisionRay (RVA 0x01EAC0C5)
 
 The camera-obstruction caller constructs a segment from a supplied focus point toward the current camera position, shortens it by a near-plane distance, and invokes WorldQueryHelper with a CStaticOnlyRaycastFilter-derived context. Its camera collision filter and ray geometry are not evidence that it is the player's reticle ray.
+
+### Successful player-relative diagnostic ray (2026-10-31)
+
+The in-game controlled-ray probe now returns a visually sensible result, as confirmed by the user. It kept the static-only filter setup and changed the ray geometry to start 10 units along Max's horizontal forward and 5 units above his transform position, pointing 45 degrees to actor-right and world-down.
+
+Ghidra comparison against `ProcessStaticCameraCollisionRay` in `MadMaxLiveCameraQueryHelper_141EAC0C5_full.bin` confirms the filter setup is the same at the relevant boundary: both call the query-context initializer with `(0, 0, 0)`, install the `CStaticOnlyRaycastFilter` vtable, write category mask `3` at filter+0x90, call `SetRaycastFilterOption(filter, true)`, and dispatch through `WorldQueryHelper`. The game caller uses its own camera-derived segment and computed distance; the mod probe uses the controlled player-relative ray and its configured range.
+
+This validates that the mod's query path and this filter configuration can produce a plausible world hit. It argues against a generally broken WorldQueryHelper call ABI or a universally invalid static-filter mask. It does **not** prove that the previous reticle anomaly was caused by filtering: the probe changed origin and direction, and the static-only predicate contains no explicit player-owner comparison. Max may still be accepted as a candidate when the ray crosses him and the category, shape-byte, and tag conditions pass. To isolate policy differences, keep origin, direction, range, query base, and shared option constant while comparing candidate filters; report filter behavior separately from ray geometry.
+
+Ghidra inspection of `TestPlayerAimRaycastCandidate` in `MadMaxLivePlayerAimFilterVirtual_142039E90.bin` confirms a materially different policy: it resolves the active player and immediately rejects a candidate whose owner at candidate+0x28 equals that player. It then accepts other candidates through its own category/interface rules.
+
+The comparison probe is now implemented and awaiting in-game verification. It builds one ray from 10 units to Max's left and 5 units above chest height (1.2 units above his transform), aimed right and down so it crosses the actor's chest and continues toward terrain. The exact same origin, direction, query base, range, and shared option are submitted sequentially with `CStaticOnlyRaycastFilter` (category mask 3) and `CPlayerAimRaycastFilter` (no extra category mask write). Separate status, fraction, position, and shape readouts let us tell whether the static filter reports Max while player-aim reports the surface behind him. This test distinguishes filter policy from ray geometry; its result remains unknown until visually verified.
 
 ## WorldQueryHelper query construction
 
@@ -107,11 +120,23 @@ A public, third-party-vendored Havok header provides an architectural cross-chec
 `FilterAndQueueWorldRayQuery` (RVA 0x01BB2C20) rejects requests whose max-distance argument is not positive. When given a non-null context, it checks the runtime object's type against `CGameObject`, `CCharacter`, and `CWeapon`, extracts a 32-bit result-flags value through an interface call, and applies two caller-provided boolean gates before forwarding to `EnqueueWorldRayQueryRequest` (RVA 0x01BA22D0). The type filters and boolean meanings are not fully named. The observed forwarding path is a separate queue subsystem; no direct call to `WorldQueryHelper` or link to the player's reticle has been established.
 
 The enqueue routine bounds the queue to 0x80 entries, atomically increments a counter at query-system+0x2040, and writes a 0x20-byte record beginning at query-system+0x1040. It copies query type at +0x00, max distance at +0x04, result flags at +0x08, `*(query-system+0x10)+1` at +0x0C, three floats from the supplied vector at +0x10, and a DWORD from `*(global+0x154)` at +0x1C. This yields a complete observed writer layout, but not the record's consumer, lifetime, completion signal, or meaning of the copied vector and two opaque words. It is a promising lead for a game-owned deferred query model, not yet a usable asynchronous raycast API.
-## Mod API status
+## Mod API status (2026-10-31)
 
-The recovered pieces are enough to describe filter predicates and two game-owned caller shapes. They are not yet enough to expose a safe reusable Rust Raycast API: world ownership, context lifetime, game-thread phase, Havok locking, native object identity, and arbitrary-context construction still need to be established.
+### Hit fraction and reconstructed position mapping (2026-10-31)
 
-The current experimental reticle probe submits the same origin, direction, and range through four filter variants: CStaticOnlyRaycastFilter, CPlayerAimRaycastFilter, CIgnoreCharactersAndVehiclesRaycastFilter, and CIgnoreFilter with a one-entry owner list containing the current player-character pointer. They share the same base filter-info masks; the game-specific predicates and optional owner exclusion differ. The bounded callback observer records candidate filter-info, owner identity, active filter masks, and selected-shape changes only for sampled reticle queries. These comparisons help isolate self-hit and category-filter hypotheses; they do not yet establish a general-purpose reticle API. Raycast diagnostics live in a separately selectable Raycast section.
+The live `WorldQueryHelper` snapshot at `0x14252EDF0` writes the accepted hit collector's three floats at `collector+0x10..+0x18` to output `+0x08..+0x10`, and writes `collector+0x20` to output `+0x14`. On a miss it writes a default normal `(0, 1, 0)` and fraction `1.0`. The output's first vector is therefore the ray-hit normal, not a hit position. The hit fraction is the normalized segment fraction.
+
+This is independently confirmed by the game-owned `GetRayWorldPosition` at `0x141E1BBF0`: it first returns the segment endpoint, then when the output fraction is below `1.0`, replaces it with `origin + direction * (range * fraction)`. The mod's current reconstruction uses the same formula with normalized direction and the requested segment length. Thus a position that is consistently misplaced is more likely caused by the camera ray's supplied origin or direction (or which camera matrix basis row/sign is chosen) than by a different hit-position formula in the Rust adapter. This does not prove the camera matrix axis/sign matches the rendered reticle; that remains the next geometry question.
+
+The collector field offsets match the public Havok `hkpWorldRayCastOutput` field order (`normal`, then `hitFraction`), used here only as an architectural cross-check. The mapping of the output fields and the game's own reconstruction are the direct Mad Max evidence.
+
+The Rust host now exposes an asynchronous, script-owned ray request API. A callback supplies copied world-space origin and direction, a maximum distance, and one named filter profile (`static_only` or `player_aim`). Requests are generation-attributed and executed at the native callback boundary; Rhai receives only a ticket and later reads copied result fields. Raw filter masks, vtables, pointers, and Havok objects remain private to the adapter. One request is accepted per script callback, no more than eight native queries execute per game callback, and ticket results are bounded and expire.
+
+The `reticle_ray` example now submits the sampled camera position and candidate camera direction with `static_only`. The debug Raycast section contains only `Hit position`; a miss or unavailable query has no position. Camera matrix translation is sampled from the game camera object. `WorldQueryRayInput::from_camera_matrix` negates the SDK's `Forward()` row to form the candidate view direction, but that sign and the resulting in-game hit position have not yet been verified with the current general request path. Do not describe this as a confirmed crosshair ray until the user checks the value while aiming at a nearby surface and then at open sky.
+
+The earlier player-relative controlled ray demonstrated that the query helper and static-only filter setup can produce a visually sensible world hit. That probe changed geometry as well as filter conditions, so it did not isolate whether the original near-player behavior came from filtering. It has been removed from the active reticle path; its findings remain useful evidence about the ABI and filter setup, not proof of camera-ray correctness.
+
+The API is an outward-facing mod contract, not a claim that arbitrary game queries are safe in every phase. The adapter currently creates and discards a known native context for each accepted request in the existing game callback. Broader thread/phase ownership, more profiles, cancellation, and other query families remain future work.
 
 
 ## Collision masks are separate from type-specific predicates

@@ -1,0 +1,6 @@
+id = "reticle_ray"
+api_version = 1
+capabilities = ["debug.draw", "game.read", "game.raycast"]
+
+[callbacks]
+"game.post_sim" = "on_post_sim"

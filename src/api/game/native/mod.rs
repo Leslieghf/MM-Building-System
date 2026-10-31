@@ -28,7 +28,7 @@ use sampling::*;
 
 use crate::api::ecs::{
     GameEndpoint, GameRuntime, GameSnapshot, IntentResult, PendingGameIntent, PendingSpawnIntent,
-    PendingVelocityIntent, RaycastCandidateShape, SpawnOutcome, SpawnRequestResult,
+    PendingVelocityIntent, SpawnOutcome, SpawnRequestResult,
 };
 use crate::api::game::abi::build::steam::{
     CAMERA_MANAGER_SINGLETON, CHARACTER_MANAGER_SINGLETON, DEVICE_MANAGER_SINGLETON,
@@ -62,14 +62,12 @@ use crate::api::game::abi::game::vehicle::{
     SetVectorFn as SetVehicleVector, Vehicle,
 };
 use crate::api::game::abi::game::world_query::{
-    C_IGNORE_CHARACTERS_AND_VEHICLES_RAYCAST_FILTER_VFTABLE_RVA,
-    C_IGNORE_FILTER_OWNER_VECTOR_BEGIN_OFFSET, C_IGNORE_FILTER_OWNER_VECTOR_CAPACITY_OFFSET,
-    C_IGNORE_FILTER_OWNER_VECTOR_END_OFFSET, C_IGNORE_FILTER_VFTABLE_RVA,
-    C_PLAYER_AIM_RAYCAST_FILTER_VFTABLE_RVA, C_RAYCAST_FILTER_ADD_RAY_HIT_RVA,
+    C_IGNORE_FILTER_OWNER_VECTOR_BEGIN_OFFSET, C_IGNORE_FILTER_OWNER_VECTOR_END_OFFSET,
+    C_IGNORE_FILTER_VFTABLE_RVA, C_RAYCAST_FILTER_ADD_RAY_HIT_RVA,
     C_STATIC_ONLY_FILTER_CATEGORY_MASK_OFFSET, C_STATIC_ONLY_RAYCAST_FILTER_VFTABLE_RVA,
     RAYCAST_FILTER_SET_OPTION_RVA, RaycastFilterSetOptionFn, WORLD_QUERY_BASE_POINTER_RVA,
-    WORLD_QUERY_CONTEXT_ACCEPTED_SHAPE_POINTER_OFFSET, WORLD_QUERY_CONTEXT_INITIALIZER_RVA,
-    WorldQueryContextInitializeFn, WorldQueryHelperFn, WorldQueryOutputRecord, WorldQueryRayInput,
+    WORLD_QUERY_CONTEXT_INITIALIZER_RVA, WorldQueryContextInitializeFn, WorldQueryHelperFn,
+    WorldQueryOutputRecord, WorldQueryRayInput,
 };
 use crate::api::game::abi::types::{Matrix4x4, Vector3};
 use crate::api::rhai::bindings::DebugPrimitive;
@@ -755,6 +753,8 @@ fn publish_player_sample(
     sample.forward = None;
     sample.rotation = rotation;
     sample.view_rotation = view_rotation;
+    sample.camera_position = None;
+    sample.camera_direction = None;
     sample.velocity = velocity;
     sample.acceleration = acceleration;
     sample.sampled_at = position.map(|_| now);

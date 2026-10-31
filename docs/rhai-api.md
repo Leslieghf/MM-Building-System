@@ -8,6 +8,7 @@ API version: **1**
 
 - `debug.draw`
 - `game.read`
+- `game.raycast`
 - `game.vehicle.write`
 - `input.read`
 - `log`
@@ -25,12 +26,16 @@ API version: **1**. Both callbacks receive the same context and have the same ca
 
 - `ctx.frame.phase: string = game.post_sim [read; universal]`
 - `ctx.frame.sequence: integer [read; universal]`
+- `ctx.frame.sample_sequence: integer [read; universal; increments when native game telemetry is refreshed]`
 - `ctx.frame.delta_seconds: float (seconds) [read; universal]`
 - `ctx.frame.elapsed_seconds: float (seconds) [read; universal]`
 - `ctx.frame.sample_age_seconds: float | () (seconds) [read; universal]`
 - `ctx.format: MadMaxFormatter [pure formatting helpers; universal]`
 - `ctx.math: MadMaxScriptMath [pure vector helpers; universal; no capability required]`
 - `ctx.gizmos: MadMaxDebugDraw [debug.draw; experimental native CDebugRenderer submission]`
+- `ctx.camera.available: bool [read; game.read; true when copied camera position and direction are both present]`
+- `ctx.camera.position: vector | () [read; game.read; copied camera matrix translation]`
+- `ctx.camera.direction: normalized vector | () [read; game.read; candidate view direction from the camera matrix; gameplay sign confirmation pending]`
 - `ctx.input: mod-owned keyboard/mouse event snapshot [input.read]; ctx.input.down(key: string), just_pressed(key: string), just_released(key: string) -> bool`
 - `ctx.player.available: bool [read; game.read]`
 - `ctx.player.position: vector | () [read; game.read]`
@@ -79,6 +84,11 @@ API version: **1**. Both callbacks receive the same context and have the same ca
 
 - `ctx.vehicle.set_velocity(#{x: number, y: number, z: number}) -> () [game.read + game.vehicle.write; finite components in [-250,250] units/s; one request per invocation; game.post_sim native adapter]`
 
+### Raycasting
+
+- `ctx.raycast.request(origin: vector, direction: vector, max_distance: number, filter: string) -> integer [game.raycast; data-only deferred query; filters: static_only, player_aim; one request per callback; independent of debug.draw]`
+- `ctx.raycast.result(ticket: integer) -> map [game.raycast; data-only result; state is pending, complete, unavailable, expired, or unknown; complete results include has_hit, hit_position, fraction, state_present; scripts may separately use debug.draw]`
+
 ### Lines and orientation
 
 - `ctx.gizmos.axes(position: vector, length: number) -> () [debug.draw; world-space RGB axes; length in world units; length 0.1..1000]`
@@ -105,7 +115,7 @@ API version: **1**. Both callbacks receive the same context and have the same ca
 
 ### Errors
 
-Undeclared capabilities, malformed values, non-finite numbers, and values outside documented bounds raise script errors. A callback error disables that script generation; a failed reload leaves the active generation running.
+Undeclared capabilities, malformed values, non-finite numbers, unknown raycast filters, and values outside documented bounds raise script errors. A callback error disables that script generation; a failed reload leaves the active generation running.
 
 ### Availability
 
@@ -117,4 +127,4 @@ Vectors use +X right, +Y up, and -Z forward. Transforms are 16-number row-major 
 
 ### Limits and native behavior
 
-Math vector components and results are finite and within [-100000, 100000]. Scalar math arguments/results must be finite; `lerp` requires `t` in [0, 1]. `normalize` and `direction` return `()` for magnitude/distance <= 1e-12. Debug coordinates and transforms are finite and within ±100000, colors are in [0, 1], and radii are in [0.01, 10000]. Debug drawing is limited to 32 primitives and 256 estimated geometry segments per invocation, and 128 primitives and 512 segments per game callback. Vehicle velocity writes require copied velocity and are published only after successful callbacks.
+Math vector components and results are finite and within [-100000, 100000]. Scalar math arguments/results must be finite; `lerp` requires `t` in [0, 1]. `normalize` and `direction` return `()` for magnitude/distance <= 1e-12. Debug coordinates and transforms are finite and within ±100000, colors are in [0, 1], and radii are in [0.01, 10000]. Debug drawing is limited to 32 primitives and 256 estimated geometry segments per invocation, and 128 primitives and 512 segments per game callback. Raycasts accept coordinates within ±100000, distance in (0, 500], one request per script callback, and up to eight requests per game callback; results are copied and available on a later callback. Vehicle velocity writes require copied velocity and are published only after successful callbacks.

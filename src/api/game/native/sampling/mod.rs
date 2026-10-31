@@ -67,50 +67,8 @@ fn copy_player_snapshot(snapshot: &mut GameSnapshot, player: &PlayerSampleState,
     snapshot.player_transform = (!stale).then_some(player.transform).flatten();
     snapshot.player_rotation = (!stale).then_some(player.rotation).flatten();
     snapshot.view_rotation = (!stale).then_some(player.view_rotation).flatten();
-    snapshot.reticle_ray_origin = (!stale).then_some(player.reticle_ray_origin).flatten();
-    snapshot.reticle_ray_direction = (!stale).then_some(player.reticle_ray_direction).flatten();
-    snapshot.reticle_query_available = !stale && player.reticle_query_available;
-    snapshot.reticle_query_state_present = !stale && player.reticle_query_state_present;
-    snapshot.reticle_hit_fraction = (!stale).then_some(player.reticle_hit_fraction).flatten();
-    snapshot.reticle_candidate_position = (!stale)
-        .then_some(player.reticle_candidate_position)
-        .flatten();
-    snapshot.reticle_candidate_shape = (!stale).then_some(player.reticle_candidate_shape).flatten();
-    snapshot.player_aim_query_available = !stale && player.player_aim_query_available;
-    snapshot.player_aim_query_state_present = !stale && player.player_aim_query_state_present;
-    snapshot.player_aim_hit_fraction = (!stale).then_some(player.player_aim_hit_fraction).flatten();
-    snapshot.player_aim_candidate_position = (!stale)
-        .then_some(player.player_aim_candidate_position)
-        .flatten();
-    snapshot.player_aim_candidate_shape = (!stale)
-        .then_some(player.player_aim_candidate_shape)
-        .flatten();
-    snapshot.ignore_characters_vehicles_query_available =
-        !stale && player.ignore_characters_vehicles_query_available;
-    snapshot.ignore_characters_vehicles_query_state_present =
-        !stale && player.ignore_characters_vehicles_query_state_present;
-    snapshot.ignore_characters_vehicles_hit_fraction = (!stale)
-        .then_some(player.ignore_characters_vehicles_hit_fraction)
-        .flatten();
-    snapshot.ignore_characters_vehicles_candidate_position = (!stale)
-        .then_some(player.ignore_characters_vehicles_candidate_position)
-        .flatten();
-    snapshot.ignore_characters_vehicles_candidate_shape = (!stale)
-        .then_some(player.ignore_characters_vehicles_candidate_shape)
-        .flatten();
-    snapshot.ignore_player_owner_query_available =
-        !stale && player.ignore_player_owner_query_available;
-    snapshot.ignore_player_owner_query_state_present =
-        !stale && player.ignore_player_owner_query_state_present;
-    snapshot.ignore_player_owner_hit_fraction = (!stale)
-        .then_some(player.ignore_player_owner_fraction)
-        .flatten();
-    snapshot.ignore_player_owner_candidate_position = (!stale)
-        .then_some(player.ignore_player_owner_candidate_position)
-        .flatten();
-    snapshot.ignore_player_owner_candidate_shape = (!stale)
-        .then_some(player.ignore_player_owner_candidate_shape)
-        .flatten();
+    snapshot.camera_position = (!stale).then_some(player.camera_position).flatten();
+    snapshot.camera_direction = (!stale).then_some(player.camera_direction).flatten();
     snapshot.player_velocity = (!stale).then_some(player.velocity).flatten();
     snapshot.player_acceleration = (!stale).then_some(player.acceleration).flatten();
 }
