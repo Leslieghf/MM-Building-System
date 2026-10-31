@@ -19,7 +19,7 @@ The artifact is under `target/x86_64-pc-windows-msvc/release/`. Deployment and g
 | --- | --- |
 | `src/kernel` | ASI initialization, startup composition, or operational logging changes. |
 | `src/api/game/abi` | Supported build identity or native layout/call metadata changes; record evidence in research notes. |
-| `src/api/game/adapter` | Guarded reads, callback hooks, telemetry capture, or native effect application changes. |
+| `src/api/game/native` | Guarded reads, callback hooks, telemetry capture, or native effect application changes. |
 | `src/api/ecs` | Owned frame contracts, schedule ordering, typed intents, diagnostics, or queue bounds change. |
 | `src/api/scripts` | Package loading, validation, console protocol, generation lifecycle, or script limits change. |
 | `src/api/rhai` | Script-visible names, values, capabilities, argument validation, or callback behavior change. |
@@ -28,7 +28,7 @@ The artifact is under `target/x86_64-pc-windows-msvc/release/`. Deployment and g
 
 ## Change rules
 
-- Keep native pointers and unsafe calls inside the adapter. Copy data into owned snapshots before crossing into ECS, scripts, or UI.
+- Keep native pointers and unsafe calls inside `api::game::native`. Copy data into owned snapshots before crossing into ECS, scripts, or UI.
 - Keep new cross-boundary work typed, validated, and bounded. Document queue-full and unavailable-data behavior.
 - Treat any script-visible name, value, capability, or semantic change as an API contract change. Update `api::rhai::catalog` and regenerate `docs/rhai-api.md` by building the crate.
 - Mark reverse-engineered claims as observed, inferred, or unverified. Do not turn research candidates into supported behavior without validation.

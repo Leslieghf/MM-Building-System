@@ -103,11 +103,11 @@ pub(super) fn draw_dev_tools(
         .build(|| {
             let _tabs = ui.tab_bar("dev_tools_tabs");
             if ui.tab_item("Console").is_some() {
-                state.active_tab = crate::devtools::model::DevToolsTab::Console;
+                state.active_tab = crate::devtools::state::DevToolsTab::Console;
                 draw_console_tab(ui, state, output, sender);
             }
             if ui.tab_item("Scripts").is_some() {
-                state.active_tab = crate::devtools::model::DevToolsTab::Scripts;
+                state.active_tab = crate::devtools::state::DevToolsTab::Scripts;
                 if !state.initial_scan_started {
                     state.initial_scan_started = true;
                     request_discovery(state, discovery);
@@ -440,7 +440,7 @@ fn draw_loaded_rows(
     state: &ScriptConsoleUiState,
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
-) -> Option<crate::devtools::model::ScriptConsoleStatusRow> {
+) -> Option<crate::devtools::state::ScriptConsoleStatusRow> {
     let mut clicked_script = None;
     ui.child_window("loaded_runtime")
         .size([0.0, ui.text_line_height_with_spacing() * 3.0])
@@ -510,7 +510,7 @@ fn draw_selected_unload(
 pub(super) fn issue_auto_reload(
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
-    item: &crate::devtools::model::ScriptConsoleStatusRow,
+    item: &crate::devtools::state::ScriptConsoleStatusRow,
 ) {
     if let Err(mut event) = sender.submit(ConsoleCommand::ScriptAutoReload {
         id: item.id.clone(),
@@ -984,7 +984,7 @@ pub(super) fn section_header(ui: &imgui::Ui, title: &str) {
 
 pub(super) fn draw_rows(
     ui: &imgui::Ui,
-    rows: &[crate::devtools::model::PresentationRow],
+    rows: &[crate::devtools::state::PresentationRow],
     section: DebugSection,
 ) {
     for row in rows.iter().filter(|row| row.section == section) {

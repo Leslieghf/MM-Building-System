@@ -21,7 +21,7 @@ use crate::api::format::{
 use crate::api::game::abi::build::steam::IMAGE_BASE as STEAM_IMAGE_BASE;
 use crate::api::game::abi::game::world_query::C_CUSTOM_SAMPLED_HEIGHT_FIELD_SHAPE_VFTABLE_RVA;
 use crate::api::scripts::console::ConsoleOutput;
-use crate::devtools::model::*;
+use crate::devtools::state::*;
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule, SingleThreadedExecutor};
@@ -50,7 +50,7 @@ pub fn create_ui_app() -> App {
             .chain()
             .in_set(MadMaxRenderSet::Presentation),
     );
-    crate::api::ecs::modding::register_ui_systems(&mut app);
+    crate::api::ecs::systems::register_ui_systems(&mut app);
     app
 }
 

@@ -12,7 +12,7 @@
 //!
 //! Hook setup failures are reported through process diagnostics and leave game
 //! sampling disabled. Rendering must not wait for script compilation or game
-//! work; UI state remains local to this module and `devtools::model`.
+//! work; UI state remains local to this module and `devtools::state`.
 mod clipboard;
 mod config;
 mod panel;
@@ -24,15 +24,15 @@ use crate::api::ecs::{
     GameSnapshot, MadMaxRender, RuntimeDiagnostics, UiEndpoint, spawn_entity_intent,
 };
 use crate::api::game::abi::types::Vector3;
-use crate::api::game::adapter as game_probe;
+use crate::api::game::native as game_probe;
 use crate::api::scripts::console::{
     ConsoleCommand, ConsoleEvent, ConsoleOutput, ConsoleRequestSender, ConsoleSeverity,
 };
-use crate::devtools::model::{
+use crate::devtools::presentation::{create_ui_app, flush_ui_intents};
+use crate::devtools::state::{
     DebugSection, OverlayMode, PendingUiInput, ScriptConsoleUiState, SpawnTestUiState,
     UI_OPACITY_MAX, UI_OPACITY_MIN, UiGameSnapshot, UiPreferences, UiPresentation,
 };
-use crate::devtools::presentation::{create_ui_app, flush_ui_intents};
 use crate::kernel::diagnostics::append_log;
 use bevy_app::App;
 use hudhook::hooks::dx11::ImguiDx11Hooks;
@@ -351,7 +351,7 @@ fn prepare_console_window(runtime: &mut UiRuntime) {
 fn draw_debug_panel(
     ui: &imgui::Ui,
     preferences: &UiPreferences,
-    rows: &[crate::devtools::model::PresentationRow],
+    rows: &[crate::devtools::state::PresentationRow],
 ) {
     let style = ui.push_style_color(
         imgui::StyleColor::WindowBg,
@@ -380,7 +380,7 @@ fn overlay_window_flags(preferences: &UiPreferences) -> imgui::WindowFlags {
 
 fn draw_debug_sections(
     ui: &imgui::Ui,
-    rows: &[crate::devtools::model::PresentationRow],
+    rows: &[crate::devtools::state::PresentationRow],
     preferences: &UiPreferences,
 ) {
     for (visible, title, section) in [

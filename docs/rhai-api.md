@@ -94,7 +94,7 @@ API version: **1**. Both callbacks receive the same context and have the same ca
 
 ### Vehicle effects
 
-- `ctx.vehicle.set_velocity(#{x: number, y: number, z: number}) -> () [game.read + game.vehicle.write; finite components in [-250,250] units/s; one request per invocation; game.post_sim native adapter]`
+- `ctx.vehicle.set_velocity(#{x: number, y: number, z: number}) -> () [game.read + game.vehicle.write; finite components in [-250,250] units/s; one request per invocation; game.post_sim native access]`
 
 ### Errors
 

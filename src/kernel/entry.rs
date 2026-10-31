@@ -8,7 +8,7 @@
 //! to install the overlay hook. Game sampling starts only when hook
 //! installation succeeds; this module never calls game functions directly.
 use crate::api::ecs::create_endpoints;
-use crate::api::game::adapter as game_access;
+use crate::api::game::native as game_access;
 use crate::devtools::overlay;
 use crate::kernel::diagnostics::append_log;
 use std::panic::{self, AssertUnwindSafe};

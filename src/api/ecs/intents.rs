@@ -5,7 +5,7 @@
 //! runtime bounds and queues them, then the native adapter resolves the current
 //! target and reports an outcome. Queue acceptance does not imply that the
 //! game applied the effect.
-use crate::api::ecs::config::{MAX_SPAWN_ASSET_KEY_BYTES, NEXT_INTENT_ID};
+use crate::api::ecs::{ids::NEXT_INTENT_ID, limits::MAX_SPAWN_ASSET_KEY_BYTES};
 use crate::api::game::abi::types::Matrix4x4;
 use bevy_ecs::prelude::*;
 use std::sync::atomic::Ordering;
@@ -218,8 +218,7 @@ pub fn player_vehicle_velocity_intent(velocity: [f32; 3]) -> impl Bundle {
     (
         TargetCurrentPlayerVehicle,
         IntentId(
-            crate::api::ecs::config::NEXT_INTENT_ID
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            crate::api::ecs::ids::NEXT_INTENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ),
         SetPlayerVehicleVelocity(velocity),
     )

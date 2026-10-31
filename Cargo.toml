@@ -11,6 +11,10 @@ too_many_lines = "warn"
 name = "madmax_bootstrap"
 crate-type = ["cdylib"]
 
+[[bin]]
+name = "trace_xref_probe"
+path = "tools/xref_probe/main.rs"
+
 [dependencies]
 hudhook = { version = "=0.9.3", default-features = false, features = ["dx11"] }
 bevy_app = { version = "=0.19.1", default-features = false, features = ["std"] }
