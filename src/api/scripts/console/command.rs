@@ -50,7 +50,12 @@ pub enum ConsoleCommand {
     /// Request a status row for one package.
     ScriptStatus(ScriptId),
     /// UI-only typed request; deliberately absent from the text parser.
-    ScriptAutoReload { id: ScriptId, enabled: bool },
+    ScriptAutoReload {
+        /// Package whose file-change watcher is being configured.
+        id: ScriptId,
+        /// Whether the watcher should remain enabled after processing.
+        enabled: bool,
+    },
 }
 impl ConsoleCommand {
     /// Parse one bounded command string into a typed operation.

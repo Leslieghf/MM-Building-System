@@ -48,6 +48,11 @@ impl GameRuntime {
         })
     }
 
+    /// Record native dispatch completion, emit script attribution, and remove
+    /// the pending ECS entity.
+    ///
+    /// The result is also published to the bounded UI outcome queue. If that
+    /// queue is full, the runtime increments its dropped-intent diagnostic.
     pub fn complete_intent(&mut self, pending: PendingVelocityIntent, result: IntentResult) {
         if let Some(origin) = self
             .app

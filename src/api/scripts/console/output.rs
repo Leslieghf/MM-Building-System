@@ -17,6 +17,7 @@ pub struct ConsoleOutput {
     revision: u64,
 }
 impl ConsoleOutput {
+    /// Read retained events in display order, oldest first.
     pub fn events(&self) -> &VecDeque<ConsoleEvent> {
         &self.events
     }
@@ -30,6 +31,7 @@ impl ConsoleOutput {
         self.text_bytes = 0;
         self.revision = self.revision.saturating_add(1);
     }
+    /// Append one event and evict oldest rows until count and byte budgets fit.
     pub fn record(&mut self, mut event: ConsoleEvent) {
         self.revision = self.revision.saturating_add(1);
         event.text = bounded_text(&event.text, MAX_EVENT_BYTES);
@@ -63,6 +65,10 @@ impl ConsoleOutput {
             }
         }
     }
+    /// Drain at most [`MAX_EVENTS_PER_RENDER`] events without blocking.
+    ///
+    /// Queue overload is recorded as a warning; a disconnected channel is
+    /// reported once and remembered for later drains.
     pub fn drain(&mut self, receiver: &ConsoleEventReceiver) {
         for _ in 0..MAX_EVENTS_PER_RENDER {
             match receiver.try_recv() {
@@ -89,6 +95,10 @@ impl ConsoleOutput {
     }
 }
 
+/// Emit bounded help rows or an error for an unknown topic.
+///
+/// All emitted rows carry `request_id`, allowing the transcript to group them
+/// with the originating console command.
 pub fn emit_help(sink: &ConsoleEventSink, request_id: u64, topic: Option<&str>) {
     let lines = match help_lines(topic) {
         Ok(lines) => lines,

@@ -97,6 +97,10 @@ const API_AVAILABILITY: &str = "Unavailable values are `()`. `available` means c
 const API_COORDINATES: &str = "Vectors use +X right, +Y up, and -Z forward. Transforms are 16-number row-major arrays in Mad Max matrix order, with translation at indices 12–14. Vector maps use numeric `x`, `y`, and `z`; RGBA maps use `r`, `g`, `b`, and `a`. Math inputs are not mutated; returned vectors are fresh maps.";
 const API_LIMITS: &str = "Math vector components and results are finite and within [-100000, 100000]. Scalar math arguments/results must be finite; `lerp` requires `t` in [0, 1]. `normalize` and `direction` return `()` for magnitude/distance <= 1e-12. Debug coordinates and transforms are finite and within ±100000, colors are in [0, 1], and radii are in [0.01, 10000]. Debug drawing is limited to 32 primitives and 256 estimated geometry segments per invocation, and 128 primitives and 512 segments per game callback. Vehicle velocity writes require copied velocity and are published only after successful callbacks. Bounds-shape methods remain experimental; their matrix-pointer argument and render visibility/lifetime depend on native behavior.";
 
+/// Callback context, capability, and effect contracts for the current script API.
+///
+/// Package validation, runtime registration, and the generated API guide all
+/// consume this catalog.
 pub const API_CALLBACKS: &[ApiCallbackDoc] = &[
     ApiCallbackDoc {
         callback: "on_post_sim",

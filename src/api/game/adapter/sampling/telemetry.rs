@@ -98,7 +98,7 @@ const _: () = assert!(
             >= C_IGNORE_FILTER_OWNER_VECTOR_CAPACITY_OFFSET + std::mem::size_of::<usize>()
 );
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(in crate::api::game::adapter) struct ReticleRaySample {
     pub(in crate::api::game::adapter) origin: Option<[f32; 3]>,
     pub(in crate::api::game::adapter) direction: Option<[f32; 3]>,

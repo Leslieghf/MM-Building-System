@@ -122,6 +122,7 @@ pub struct GameSnapshot {
     pub reticle_hit_fraction: Option<f32>,
     /// Point reconstructed as origin + direction * (range * fraction).
     pub reticle_candidate_position: Option<[f32; 3]>,
+    /// Diagnostic identity observed for the candidate shape; not a game handle.
     pub reticle_candidate_shape: Option<RaycastCandidateShape>,
     /// Whether the player-aim filter query could be called.
     pub player_aim_query_available: bool,

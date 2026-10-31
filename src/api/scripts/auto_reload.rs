@@ -116,6 +116,7 @@ impl AutoReloadTracker {
         }
     }
 
+    /// Stop tracking `id` and discard its debounce history.
     pub fn remove(&mut self, id: &ScriptId) {
         self.watches.remove(id);
     }

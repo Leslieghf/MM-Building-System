@@ -6,6 +6,9 @@
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// Variant names and grouped ID ranges are documented once on the enum; repeating
+// each name as “X key” adds no contract information.
+#[allow(missing_docs)]
 /// Stable identifiers for keys observed by the mod-owned UI input backend.
 ///
 /// The numeric ID and canonical lowercase name of each variant are part of the
