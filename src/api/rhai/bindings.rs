@@ -1,4 +1,10 @@
-//! Rhai context composition and registration of the mod-facing scripting API.
+//! Composition of the versioned Rhai context and callback-scoped capabilities.
+//!
+//! Registration is driven by [`super::catalog`]. Each invocation receives an
+//! owned frame, stable input snapshot, formatter, pure math helpers, and only
+//! the effect collectors granted by its package capabilities. Collectors are
+//! discarded after the callback and validated before becoming typed intents;
+//! no live game pointer is registered with Rhai.
 #[path = "bindings/debug_draw.rs"]
 mod debug_draw;
 use super::catalog::{API_CALLBACKS, API_CAPABILITIES};

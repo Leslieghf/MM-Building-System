@@ -1,4 +1,9 @@
-//! Bounded console requests and script-package lifecycle commands.
+//! Drain bounded console requests and apply script-package lifecycle commands.
+//!
+//! Commands are consumed only at game callback boundaries and processed in
+//! queue order up to the per-callback limit. Loader work is requested through
+//! its worker channel; this module does not perform filesystem reads or Rhai
+//! compilation on the game thread.
 use super::*;
 use crate::api::scripts::{ScriptId, manager::ScriptListing};
 

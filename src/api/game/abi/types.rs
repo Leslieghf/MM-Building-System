@@ -49,7 +49,9 @@ impl HashId {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Vector2 {
+    /// Horizontal component.
     pub x: f32,
+    /// Vertical component.
     pub y: f32,
 }
 
@@ -64,8 +66,11 @@ impl Vector2 {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Vector3 {
+    /// X component.
     pub x: f32,
+    /// Y component.
     pub y: f32,
+    /// Z component.
     pub z: f32,
 }
 
@@ -129,9 +134,13 @@ impl core::ops::Mul<f32> for Vector3 {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Vector4 {
+    /// X component.
     pub x: f32,
+    /// Y component.
     pub y: f32,
+    /// Z component.
     pub z: f32,
+    /// Homogeneous or caller-defined fourth component.
     pub w: f32,
 }
 
@@ -151,7 +160,9 @@ impl Vector4 {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Plane {
+    /// Plane normal.
     pub normal: Vector3,
+    /// Scalar plane offset `D`.
     pub d: f32,
 }
 
@@ -159,7 +170,9 @@ pub struct Plane {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct AxisAlignedBox {
+    /// Minimum corner.
     pub min: Vector3,
+    /// Maximum corner.
     pub max: Vector3,
 }
 
@@ -167,9 +180,13 @@ pub struct AxisAlignedBox {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Quaternion {
+    /// X component of the imaginary part.
     pub x: f32,
+    /// Y component of the imaginary part.
     pub y: f32,
+    /// Z component of the imaginary part.
     pub z: f32,
+    /// Scalar component.
     pub w: f32,
 }
 
@@ -193,6 +210,7 @@ impl Quaternion {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Matrix4x4 {
+    /// Four row-major rows of four `f32` values each.
     pub values: [[f32; 4]; 4],
 }
 

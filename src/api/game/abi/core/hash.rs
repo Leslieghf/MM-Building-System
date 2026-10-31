@@ -1,7 +1,5 @@
-//! Hashing function signature from `core/hash.h`.
-
-use core::ffi::c_char;
-
-/// Candidate signature of the game's `HashString(const char*)` function.
-/// Address and text lifetime still require build-specific validation.
-pub type HashStringFn = unsafe extern "system" fn(*const c_char) -> u32;
+//! Candidate string-hashing call shape from the pinned `core/hash.h`.
+//!
+//! The returned 32-bit hash is not equivalent to [`super::super::types::HashId`]
+//! construction for arbitrary text unless the game's function is called. This
+//! module contains no mapped address or safe Rust hashing substitute.

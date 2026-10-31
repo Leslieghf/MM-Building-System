@@ -1,4 +1,10 @@
-//! Validated spawn/vehicle intent contracts and request constructors.
+//! Owned requests for game effects and their validation/completion records.
+//!
+//! Systems create intents here rather than invoking the game. Constructors
+//! validate portable values and assign host-local request IDs; the game
+//! runtime bounds and queues them, then the native adapter resolves the current
+//! target and reports an outcome. Queue acceptance does not imply that the
+//! game applied the effect.
 use crate::api::ecs::config::{MAX_SPAWN_ASSET_KEY_BYTES, NEXT_INTENT_ID};
 use crate::api::game::abi::types::Matrix4x4;
 use bevy_ecs::prelude::*;

@@ -1,4 +1,9 @@
-//! Registration of script and mod systems into the game and UI schedules.
+//! Registration points and ordering for first-party systems in both schedules.
+//!
+//! Game systems run inside the accepted post-simulation callback and may use
+//! owned ECS state and typed intents only. UI systems run in the separate
+//! render schedule and must not access game resources. User-authored Rhai
+//! callbacks are dispatched by the host in the designated callback set.
 use super::{MadMaxPostSim, MadMaxPostSimSet, MadMaxRender, MadMaxRenderSet, RuntimeDiagnostics};
 use bevy_app::App;
 use bevy_ecs::prelude::ResMut;

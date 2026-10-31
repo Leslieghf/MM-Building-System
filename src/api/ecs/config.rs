@@ -1,4 +1,9 @@
-//! Queue and per-callback limits for the owned modding runtime.
+//! Capacity and work limits for bounded ECS transports and callback phases.
+//!
+//! Queue capacities bound retained cross-thread data; per-render and
+//! per-callback limits bound work performed at a single boundary. Producers
+//! must handle a full queue explicitly rather than blocking the game or render
+//! thread.
 /// Number of owned snapshots retained by cross-callback transport.
 pub const SNAPSHOT_QUEUE_CAPACITY: usize = 8;
 /// Number of typed velocity effects retained by cross-callback transport.

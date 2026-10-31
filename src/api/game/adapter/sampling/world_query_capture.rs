@@ -1,4 +1,9 @@
-//! Bounded capture of candidate shapes from world-query outputs.
+//! Bounded, callback-safe capture of world-query arguments and candidate data.
+//!
+//! Native taps copy only selected, readable spans into fixed-capacity atomic
+//! records. Capture is diagnostic: the data is not an owned entity handle and
+//! does not authorize later dereferences. Deferred decoding and formatting
+//! occur outside the trampoline.
 use super::*;
 
 pub(in crate::api::game::adapter) fn is_reticle_query_label_bytes(

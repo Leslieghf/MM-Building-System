@@ -1,4 +1,9 @@
 //! Read-only sampling that turns validated native observations into owned values.
+//!
+//! `actors`, `camera`, and `reticle` decode their respective observations;
+//! `telemetry` defines the bounded publication records, and
+//! `world_query_capture` owns experimental diagnostic capture. Sampling does
+//! not retain game pointers or apply script effects.
 mod actors;
 mod camera;
 mod reticle;

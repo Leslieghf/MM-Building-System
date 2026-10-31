@@ -1,4 +1,9 @@
-//! Owned input frames consumed by Rust systems and script callbacks.
+//! Owned mod-input frames consumed by game systems and script callbacks.
+//!
+//! Input is sampled from the overlay backend, not from Mad Max's controller
+//! system. Stable [`InputKey`](super::input_key::InputKey) IDs index the
+//! keyboard/mouse state. Transition bits accumulate until a game callback
+//! consumes or clears them, so missed callbacks do not lose a key edge.
 
 use bevy_ecs::prelude::Resource;
 use std::sync::{Arc, Mutex};

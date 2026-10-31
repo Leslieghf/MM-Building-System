@@ -1,4 +1,9 @@
-//! Thread-safe publication of copied telemetry across hook and UI boundaries.
+//! Fixed-capacity telemetry records shared across native callback and UI threads.
+//!
+//! Writers publish copied scalar/array values with release ordering; readers
+//! acquire readiness before constructing owned snapshots. Records never
+//! transfer ownership of game memory, and invalid samples remain explicitly
+//! unavailable rather than reusing a previous frame's value.
 use super::*;
 
 pub(in crate::api::game::adapter) struct PlayerSampleState {

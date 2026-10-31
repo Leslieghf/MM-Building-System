@@ -1,4 +1,10 @@
-//! Native CDebugRenderer submission for bounded script primitives.
+//! Build-specific `CDebugRenderer` submission for validated script primitives.
+//!
+//! The adapter resolves the renderer and its supported method slots only after
+//! the executable/build gate passes. It consumes owned primitives drained from
+//! callback collectors; this layer performs the native calls, while validation
+//! and per-callback work budgets are enforced before submission. Renderer
+//! behavior remains experimental and is not guaranteed by a successful build.
 use super::super::*;
 
 #[derive(Clone, Copy)]

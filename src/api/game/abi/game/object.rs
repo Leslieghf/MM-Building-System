@@ -22,12 +22,6 @@ pub struct ObjectId {
     pub user_data: u32,
 }
 
-/// `CGameObject::GetNameHash()` declaration.
-pub type GetNameHashFn = unsafe extern "system" fn(*mut GameObject) -> u32;
-
-/// `CGameObject::GetObjectID()` declaration returning an eight-byte value.
-pub type GetObjectIdFn = unsafe extern "system" fn(*mut GameObject) -> ObjectId;
-
 #[cfg(test)]
 mod tests {
     use super::ObjectId;
@@ -41,9 +35,3 @@ mod tests {
 
 /// `CGameObject::GetTransform(CMatrix*)` using a caller-owned matrix buffer.
 pub type GetTransformFn = unsafe extern "system" fn(*mut GameObject, *mut Matrix4x4) -> bool;
-
-/// `CGameObject::SetTransform(CMatrix*)` using a caller-owned matrix buffer.
-pub type SetTransformFn = unsafe extern "system" fn(*mut GameObject, *mut Matrix4x4);
-
-/// `CGameObject::InitTransform(const CMatrix&)` using a borrowed matrix.
-pub type InitTransformFn = unsafe extern "system" fn(*mut GameObject, *const Matrix4x4);

@@ -1,4 +1,10 @@
-//! Rate-limited reticle ray queries and owned candidate observations.
+//! Rate-limited reticle ray sampling with comparable filter-policy outputs.
+//!
+//! A validated player/camera ray is queried with the static, player-aim,
+//! character/vehicle exclusion, and player-owner exclusion policies. Each
+//! result is copied into telemetry with availability tracked separately from
+//! hit/miss state. Native contexts and temporary owner storage stay alive for
+//! the duration of their query and are never published.
 use super::*;
 
 struct QueryApi {

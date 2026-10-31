@@ -9,7 +9,3 @@ pub enum EventImpl {}
 
 /// Opaque SDK event handler base.
 pub enum EventHandler {}
-
-/// Shape of `CEventHandler::HandleEvent` with borrowed event/data pointers.
-pub type HandleEventFn =
-    unsafe extern "system" fn(*mut EventHandler, *const EventImpl, *mut core::ffi::c_void);

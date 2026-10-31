@@ -1,16 +1,24 @@
-//! Address metadata from the pinned community SDK revision.
+//! Address metadata used by the build-specific adapter.
 //!
-//! These are candidate absolute addresses from the SDK's `ADDRESS` macros and
-//! global definitions. Resolution is useful for inventory and diagnostics; it
-//! does not validate an executable or make a native call safe.
+//! # Address contract
+//!
+//! [`SDK_REVISION`] identifies the source snapshot for header-derived values.
+//! [`AddressPair`] keeps distribution-specific absolute addresses separate;
+//! the adapter resolves only addresses it actually uses. An address pair is
+//! candidate metadata, not proof that the user's executable matches or that a
+//! function's ABI/lifecycle is safe. Executable validation is performed by the
+//! adapter before use.
 
 /// Pinned source revision used to derive the address table.
 pub const SDK_REVISION: &str = "f2dc640769c88aae9c3965a2aca0aa138f0e62ab";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecutableFingerprint {
+    /// PE header timestamp used to identify this executable build.
     pub pe_timestamp: u32,
+    /// Exact executable size in bytes.
     pub file_size: u64,
+    /// Expected hexadecimal SHA-256 string, compared case-insensitively.
     pub sha256: &'static str,
 }
 
@@ -23,6 +31,7 @@ pub const LOCAL_STEAM_TARGET: ExecutableFingerprint = ExecutableFingerprint {
 };
 
 impl ExecutableFingerprint {
+    /// Compare a candidate executable's metadata against this fingerprint.
     pub fn matches(&self, pe_timestamp: u32, file_size: u64, sha256: &str) -> bool {
         self.pe_timestamp == pe_timestamp
             && self.file_size == file_size
@@ -32,14 +41,19 @@ impl ExecutableFingerprint {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SdkBuild {
+    /// GOG build 1.0.3.0.
     Gog1030,
+    /// Steam build 1.0.3.0.
     Steam1030,
+    /// Any build without an address mapping in this crate.
     Unsupported,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddressPair {
+    /// Absolute address for the GOG build, or `None` when unavailable.
     pub gog: Option<usize>,
+    /// Absolute address for the Steam build, or `None` when unavailable.
     pub steam: Option<usize>,
 }
 
@@ -59,20 +73,6 @@ impl AddressPair {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SymbolEvidence {
-    HeaderDeclaration,
-    SourceDefinition,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NativeSymbol {
-    pub name: &'static str,
-    pub source_path: &'static str,
-    pub address: AddressPair,
-    pub evidence: SymbolEvidence,
-}
-
 const fn pair(gog: usize, steam: usize) -> AddressPair {
     AddressPair {
         gog: if gog == 0 { None } else { Some(gog) },
@@ -80,17 +80,29 @@ const fn pair(gog: usize, steam: usize) -> AddressPair {
     }
 }
 
+/// Character-manager singleton address pair from the SDK.
 pub const CHARACTER_MANAGER_SINGLETON_PAIR: AddressPair = pair(0x1417_11B38, 0x1417_F5338);
+/// Current-player-character accessor address pair from the SDK.
 pub const GET_PLAYER_CHARACTER_PAIR: AddressPair = pair(0x1400_FBD30, 0x141C_91250);
+/// Character-to-vehicle accessor address pair from the SDK.
 pub const GET_CHARACTER_VEHICLE_PAIR: AddressPair = pair(0x1400_EE860, 0x141C_82910);
+/// Camera-manager singleton address pair from the SDK.
 pub const CAMERA_MANAGER_SINGLETON_PAIR: AddressPair = pair(0x1417_11B78, 0x1417_F5378);
+/// Camera-matrix accessor address pair from the SDK.
 pub const GET_CAMERA_MATRIX_PAIR: AddressPair = pair(0x1405_F3CB0, 0x1422_2DA60);
+/// Spawn descriptor constructor address pair from the SDK.
 pub const SPAWN_INFO_CTOR_PAIR: AddressPair = pair(0x1402_E19D0, 0x141E_B2410);
+/// Spawn descriptor destructor address pair from the SDK.
 pub const SPAWN_INFO_DTOR_PAIR: AddressPair = pair(0x1402_E2320, 0x141E_B2E10);
+/// Spawn descriptor entity-file setter address pair from the SDK.
 pub const SPAWN_SET_ENTITY_FILE_PAIR: AddressPair = pair(0x1405_48C60, 0x1421_71820);
+/// Spawn ID accessor address pair from the SDK.
 pub const SPAWN_GET_NEW_ID_PAIR: AddressPair = pair(0x1405_099D0, 0x1421_2B750);
+/// Spawn submission address pair from the SDK.
 pub const SPAWN_SUBMIT_PAIR: AddressPair = pair(0x1405_62EB0, 0x1421_8D5B0);
+/// Spawn-system context singleton address pair from the SDK.
 pub const SPAWN_SYSTEM_CONTEXT_PAIR: AddressPair = pair(0x1417_1B678, 0x1417_FEE78);
+/// Device-manager singleton address pair; absent from the GOG build mapping.
 pub const DEVICE_MANAGER_SINGLETON_PAIR: AddressPair = pair(0, 0x1417_F4EF0);
 
 const fn steam_address(address: AddressPair) -> usize {
@@ -100,10 +112,11 @@ const fn steam_address(address: AddressPair) -> usize {
     }
 }
 
-/// Named Steam 1.0.3.0 SDK addresses already consumed by the native adapter.
-/// They remain candidate addresses and must not be used on another build.
+/// Steam 1.0.3.0 addresses consumed by the current adapter.
+///
+/// These absolute addresses are candidates for the inspected executable only.
 pub mod steam {
-    /// Preferred image base used by the inspected Steam executable build.
+    /// Preferred image base recorded for the inspected Steam executable.
     pub const IMAGE_BASE: usize = 0x14000_0000;
 
     use super::{
@@ -114,230 +127,31 @@ pub mod steam {
         SPAWN_SYSTEM_CONTEXT_PAIR, steam_address,
     };
 
+    /// Character-manager singleton address.
     pub const CHARACTER_MANAGER_SINGLETON: usize = steam_address(CHARACTER_MANAGER_SINGLETON_PAIR);
+    /// Current-player-character accessor address.
     pub const GET_PLAYER_CHARACTER: usize = steam_address(GET_PLAYER_CHARACTER_PAIR);
+    /// Character-to-vehicle accessor address.
     pub const GET_CHARACTER_VEHICLE: usize = steam_address(GET_CHARACTER_VEHICLE_PAIR);
+    /// Camera-manager singleton address.
     pub const CAMERA_MANAGER_SINGLETON: usize = steam_address(CAMERA_MANAGER_SINGLETON_PAIR);
+    /// Camera-matrix accessor address.
     pub const GET_CAMERA_MATRIX: usize = steam_address(GET_CAMERA_MATRIX_PAIR);
+    /// Spawn descriptor constructor address.
     pub const SPAWN_INFO_CTOR: usize = steam_address(SPAWN_INFO_CTOR_PAIR);
+    /// Spawn descriptor destructor address.
     pub const SPAWN_INFO_DTOR: usize = steam_address(SPAWN_INFO_DTOR_PAIR);
+    /// Spawn descriptor entity-file setter address.
     pub const SPAWN_SET_ENTITY_FILE: usize = steam_address(SPAWN_SET_ENTITY_FILE_PAIR);
+    /// Spawn ID accessor address.
     pub const SPAWN_GET_NEW_ID: usize = steam_address(SPAWN_GET_NEW_ID_PAIR);
+    /// Spawn submission address.
     pub const SPAWN_SUBMIT: usize = steam_address(SPAWN_SUBMIT_PAIR);
+    /// Spawn-system context singleton address.
     pub const SPAWN_SYSTEM_CONTEXT: usize = steam_address(SPAWN_SYSTEM_CONTEXT_PAIR);
+    /// Device-manager singleton address.
     pub const DEVICE_MANAGER_SINGLETON: usize = steam_address(DEVICE_MANAGER_SINGLETON_PAIR);
 }
-
-/// Address declarations explicitly present in the pinned SDK.
-///
-/// A resolved address remains a candidate until matched against the exact
-/// executable and the function's calling convention and lifecycle are checked.
-pub const SDK_NATIVE_SYMBOLS: &[NativeSymbol] = &[
-    NativeSymbol {
-        name: "CMatrix::operator*(CVector4f)",
-        source_path: "math3d.h",
-        address: pair(0x1409_DEA30, 0),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CMatrix::RotationYawPitchRoll",
-        source_path: "math3d.h",
-        address: pair(0x1409_EA970, 0),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CMatrix::ToEulerXYZ",
-        source_path: "math3d.h",
-        address: pair(0x1409_EA850, 0x1429_BE740),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CMatrix::FromEulerXYZ",
-        source_path: "math3d.h",
-        address: pair(0x1409_EA3F0, 0x1429_BE740),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CMatrix::ToEuler",
-        source_path: "math3d.h",
-        address: pair(0x1409_EC760, 0x1429_C0EE0),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CQuaternion::FromMatrix4",
-        source_path: "math3d.h",
-        address: pair(0x1409_F4470, 0x1429_C91A0),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CQuaternion::ToMatrix4",
-        source_path: "math3d.h",
-        address: pair(0x1409_E1270, 0x1429_B49A0),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CQuaternion::FromEulerXYZ",
-        source_path: "math3d.h",
-        address: pair(0x1409_EF470, 0x1429_C3D30),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CQuaternion::FromEuler",
-        source_path: "math3d.h",
-        address: pair(0x1409_EF030, 0x1429_C38D0),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CQuaternion::operator*(CVector3f)",
-        source_path: "math3d.h",
-        address: pair(0x1409_E1BA0, 0x1429_B5340),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "SSpawnInstanceInfo::constructor",
-        source_path: "game/spawnsystem.h",
-        address: SPAWN_INFO_CTOR_PAIR,
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "SSpawnInstanceInfo::destructor",
-        source_path: "game/spawnsystem.h",
-        address: SPAWN_INFO_DTOR_PAIR,
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "SSpawnInstanceInfo::SetEntityFile",
-        source_path: "game/spawnsystem.h",
-        address: SPAWN_SET_ENTITY_FILE_PAIR,
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "SpawnSystemGetNewSpawnId",
-        source_path: "game/spawnsystem.h",
-        address: SPAWN_GET_NEW_ID_PAIR,
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "SpawnSystemDespawn",
-        source_path: "game/spawnsystem.h",
-        address: pair(0x1405_30400, 0x1421_57080),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "SpawnSystemSpawn",
-        source_path: "game/spawnsystem.h",
-        address: SPAWN_SUBMIT_PAIR,
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CCharacterBase::RotateInstantly",
-        source_path: "game/go/character.h",
-        address: pair(0x1406_3F940, 0x1422_87340),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CCharacter::ForceNeutralState",
-        source_path: "game/go/character.h",
-        address: pair(0x1401_39A20, 0x141C_D69B0),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CCharacter::GetVehiclePtr",
-        source_path: "game/go/character.h",
-        address: GET_CHARACTER_VEHICLE_PAIR,
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CCameraControlManager::GetCameraMatrix",
-        source_path: "game/cameramanager.h",
-        address: GET_CAMERA_MATRIX_PAIR,
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CCharacterManager::GetPlayerCharacter",
-        source_path: "game/charactermanager.h",
-        address: GET_PLAYER_CHARACTER_PAIR,
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CGame::IsGuiOccludingMainDraw",
-        source_path: "game/game.h",
-        address: pair(0x1402_11FD0, 0x141D_C8130),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "HashString",
-        source_path: "core/hash.h",
-        address: pair(0x140F_332C0, 0x142F_BD230),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CInputActionMap::GetValue",
-        source_path: "core/input.h",
-        address: pair(0x1409_27740, 0x1428_DA580),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "IInputDeviceManager::GetActionMap",
-        source_path: "core/input.h",
-        address: pair(0x1409_24140, 0x1428_D64B0),
-        evidence: SymbolEvidence::HeaderDeclaration,
-    },
-    NativeSymbol {
-        name: "CGraphicsEngine::m_Params",
-        source_path: "core/graphics/graphicsengine.cpp",
-        address: pair(0x1416_E9BF0, 0x1417_CB6E0),
-        evidence: SymbolEvidence::SourceDefinition,
-    },
-    NativeSymbol {
-        name: "CGameState::m_InMainMenu",
-        source_path: "game/game.cpp",
-        address: pair(0x1417_1A32B, 0x1417_FDB2B),
-        evidence: SymbolEvidence::SourceDefinition,
-    },
-    NativeSymbol {
-        name: "CGameState::m_State",
-        source_path: "game/game.cpp",
-        address: pair(0x1417_1A32C, 0x1417_FDB2C),
-        evidence: SymbolEvidence::SourceDefinition,
-    },
-    NativeSymbol {
-        name: "CAvaSingle<CGraphicsEngine>::Instance",
-        source_path: "core/avasingle.cpp",
-        address: pair(0x1417_116D0, 0x1417_F4EC8),
-        evidence: SymbolEvidence::SourceDefinition,
-    },
-    NativeSymbol {
-        name: "CAvaSingle<CDeviceManager>::Instance",
-        source_path: "core/avasingle.cpp",
-        address: pair(0x1417_11708, 0),
-        evidence: SymbolEvidence::SourceDefinition,
-    },
-    NativeSymbol {
-        name: "CAvaSingle<CDeviceManager_STEAM>::Instance",
-        source_path: "core/avasingle.cpp",
-        address: DEVICE_MANAGER_SINGLETON_PAIR,
-        evidence: SymbolEvidence::SourceDefinition,
-    },
-    NativeSymbol {
-        name: "CAvaSingle<CCharacterManager>::Instance",
-        source_path: "core/avasingle.cpp",
-        address: CHARACTER_MANAGER_SINGLETON_PAIR,
-        evidence: SymbolEvidence::SourceDefinition,
-    },
-    NativeSymbol {
-        name: "CAvaSingle<CCameraControlManager>::Instance",
-        source_path: "core/avasingle.cpp",
-        address: CAMERA_MANAGER_SINGLETON_PAIR,
-        evidence: SymbolEvidence::SourceDefinition,
-    },
-    NativeSymbol {
-        name: "s_SpawnSystemContext",
-        source_path: "game/spawnsystem.cpp",
-        address: SPAWN_SYSTEM_CONTEXT_PAIR,
-        evidence: SymbolEvidence::SourceDefinition,
-    },
-];
 
 #[cfg(test)]
 mod tests {

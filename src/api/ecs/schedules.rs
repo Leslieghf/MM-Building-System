@@ -1,4 +1,8 @@
-//! Game-side Bevy schedule setup and projection of snapshots into mod-facing entities.
+//! Construction and ordered execution of the game-side Bevy schedule.
+//!
+//! The schedule imports an owned snapshot before mod systems run and exports
+//! typed effects afterward. Its single-threaded executor preserves callback
+//! affinity; native access remains outside the schedule in the adapter.
 use super::{
     CurrentGameFrame, CurrentPlayerVehicleProxy, GameSnapshot, MadMaxPostSim, MadMaxPostSimSet,
     PlayerCharacterProxy, PlayerFrameData, RuntimeDiagnostics, VehicleFrameData,

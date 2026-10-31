@@ -1,4 +1,8 @@
-//! Drain typed script, spawn, and vehicle effects from the game world.
+//! Drain callback-produced effects and record adapter completion outcomes.
+//!
+//! Requests stay as owned ECS data until the host adapter accepts one at a
+//! valid game callback. The runtime records typed outcomes for later UI
+//! presentation; this module does not call native game functions itself.
 use super::*;
 
 impl GameRuntime {

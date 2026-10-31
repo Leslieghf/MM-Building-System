@@ -1,4 +1,9 @@
-//! Schedule labels and copied game-frame ECS projections.
+//! Game/render schedule labels and owned projections of copied frame data.
+//!
+//! [`GameSnapshot`] is the adapter-to-runtime boundary value. ECS resources and
+//! proxy entities in this module are projections of that snapshot, not live
+//! game objects. Optional samples remain unavailable when the adapter cannot
+//! validate a value; consumers must not infer them from stale state.
 use super::{IntentOutcome, SpawnOutcome};
 use crate::api::game::abi::types::Matrix4x4;
 use bevy_ecs::prelude::*;

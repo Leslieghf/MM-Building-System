@@ -24,16 +24,3 @@ pub struct WeaponRay {
 
 /// RVA of CWeapon::GetRayWorldPosition in the inspected Steam executable.
 pub const C_WEAPON_GET_RAY_WORLD_POSITION_RVA: usize = 0x01E1_BBF0;
-
-/// Recovered ABI of CWeapon::GetRayWorldPosition.
-///
-/// The function writes the full-range endpoint first, performs the game's
-/// shared world query, and writes a nearer collision point when the query
-/// provides a fraction below its 1.0 fallback. The return value is the
-/// output pointer in observed calls, not a hit/miss flag. Do not call this
-/// until the receiver lifetime and game-thread/phase requirements are known.
-pub type CWeaponGetRayWorldPositionFn = unsafe extern "system" fn(
-    weapon: *mut CWeapon,
-    output_position: *mut Vector3,
-    ray: *const WeaponRay,
-) -> *mut Vector3;

@@ -1,5 +1,9 @@
-//! Supported executable addresses and sampling limits for this game build.
 //! Supported executable fingerprint, native addresses, and sampling budgets.
+//!
+//! Address constants are RVAs relative to the validated Steam image base unless
+//! named as a vtable slot. This module centralizes build-specific metadata and
+//! sampling intervals; it does not itself validate addresses or authorize
+//! native calls. Validation belongs to the adapter and hook installers.
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 

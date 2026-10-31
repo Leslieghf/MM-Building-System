@@ -1,4 +1,9 @@
 //! Camera-matrix sampling from the supported game build.
+//!
+//! The camera matrix is copied only after the camera-manager singleton and
+//! method target pass build-specific validation. The copied matrix is telemetry
+//! input; the game-owned manager and all temporary pointers remain local to the
+//! adapter call.
 use super::*;
 
 pub(in crate::api::game::adapter) fn sample_camera_matrix() -> Option<Matrix4x4> {

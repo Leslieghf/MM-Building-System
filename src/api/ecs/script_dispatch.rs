@@ -1,4 +1,9 @@
-//! Run script callbacks from owned ECS frames and translate results into typed effects.
+//! Dispatch Rhai callbacks from owned frames and collect typed effects.
+//!
+//! This system passes the current copied frame and input snapshot to the script
+//! manager. Callback outputs become bounded ECS components for later export;
+//! native effects are not invoked during script execution. Completion events
+//! retain package and generation identity for UI attribution.
 use crate::api::ecs::CurrentGameFrame;
 use crate::api::scripts::{
     ScriptEvent,

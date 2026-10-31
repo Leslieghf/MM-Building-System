@@ -1,17 +1,24 @@
-//! Game-state enum declarations from `game/game.h`.
+//! Game-state discriminants declared by the pinned `game/game.h`.
+//!
+//! The enum records source values for layout and decoding work; it is not a
+//! live process-state reader. The accompanying function alias has no resolved
+//! address or validated call path and must not be invoked directly.
 
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Game lifecycle states and their SDK discriminants.
 pub enum GameState {
+    /// Installation state.
     Install = 0,
+    /// Initialization state.
     Init = 1,
+    /// Content loading state.
     Load = 2,
+    /// Active gameplay state.
     Run = 3,
+    /// Startup transition state.
     Startup = 4,
 }
-
-/// Candidate signature of `CGame::IsGuiOccludingMainDraw()`.
-pub type IsGuiOccludingMainDrawFn = unsafe extern "system" fn() -> bool;
 
 #[cfg(test)]
 mod tests {

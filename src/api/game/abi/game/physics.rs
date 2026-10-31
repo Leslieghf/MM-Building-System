@@ -355,16 +355,6 @@ pub struct CAmmunition {
 /// adapter instead of manufacturing a `CAmmunition` receiver.
 pub const C_AMMUNITION_CHECK_COLLISIONS_RVA: usize = 0x01DA_56C0;
 
-/// Runtime-observed ABI of `CAmmunition::CheckCollisions`.
-///
-/// The receiver is game-owned. `mode` is the byte argument observed in `DL`;
-/// zero derives a segment length from ammunition fields, while nonzero reads
-/// the stored length at receiver offset `+0xD0` and clears bit 0 at `+0x11E`.
-/// This function mutates the receiver and can invoke native collision
-/// callbacks, so it is not suitable as a standalone placement raycast.
-pub type CAmmunitionCheckCollisionsFn =
-    unsafe extern "system" fn(ammunition: *mut CAmmunition, mode: u8);
-
 /// Game force-pulse object with multiple game, PFX, RTTI, and event-handler
 /// bases. The native layout and base offsets are deliberately not modeled.
 #[repr(C)]

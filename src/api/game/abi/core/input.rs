@@ -1,6 +1,9 @@
-//! Candidate input action-map ABI declarations from `core/input.h`.
-use crate::api::game::abi::types::HashId;
-
+//! Candidate input action-map declarations from the pinned `core/input.h`.
+//!
+//! The module records opaque manager types, observed field offsets, and SDK
+//! call shapes. The current mod-owned input snapshot comes from ImGui; these
+//! declarations do not poll the game's controller state or authorize native
+//! input calls.
 /// Opaque `Input::CInputActionMap`.
 pub enum InputActionMap {}
 
@@ -13,10 +16,3 @@ pub const STEAM_DEVICE_MANAGER_INPUT_MANAGER_OFFSET: usize = 0xA0;
 /// SDK-declared byte offset of `CInputDeviceManager::m_IsInFocus` within its
 /// base-plus-derived object layout.
 pub const INPUT_DEVICE_MANAGER_IS_IN_FOCUS_OFFSET: usize = 0x80;
-
-/// `CInputActionMap::GetValue(const CHashString&)` candidate signature.
-pub type GetActionValueFn = unsafe extern "system" fn(*mut InputActionMap, u32) -> f32;
-
-/// `IInputDeviceManager::GetActionMap(const CHashString&)` candidate signature.
-pub type GetActionMapFn =
-    unsafe extern "system" fn(*mut InputDeviceManager, *const HashId) -> *mut InputActionMap;

@@ -1,4 +1,9 @@
 //! Player and vehicle sampling copied into owned telemetry.
+//!
+//! This module resolves the current player and vehicle only during an accepted
+//! sampling callback, copies validated transforms and motion values, and
+//! publishes availability with the sample. It does not expose entity pointers
+//! to the ECS or scripts.
 use super::*;
 
 #[derive(Default)]

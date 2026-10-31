@@ -1,4 +1,8 @@
-//! ANSI-free copy text and bounded SGR coloring for console rows.
+//! Safe console text extraction and a small, bounded SGR color subset.
+//!
+//! Plain-text copy strips escape sequences. Rendering recognizes only the
+//! supported color and bold codes, caps parsed spans, and ignores unsupported
+//! controls; terminal escape sequences are never executed.
 use super::*;
 
 pub(super) fn console_plain_text(text: &str) -> String {

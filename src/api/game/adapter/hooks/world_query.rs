@@ -1,4 +1,10 @@
-//! Lifecycle and callbacks for observing native world-query activity.
+//! Installation, sampling callbacks, and diagnostics for native world queries.
+//!
+//! Hooks are enabled only for the supported image and validated entry bytes.
+//! The taps preserve the original query path and collect bounded diagnostic
+//! samples; they do not turn the game helper into a supported mod API. The
+//! owned observations are decoded in `sampling::world_query_capture` and
+//! logged after collection rather than from the native trampoline.
 use super::super::*;
 
 pub(in crate::api::game::adapter) fn install_world_query_hook(image_base: usize) {

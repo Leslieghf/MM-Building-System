@@ -4,7 +4,7 @@
 //! custom vector and must be constructed/destroyed by the game. It is opaque
 //! here by design; this module does not provide allocation or native calls.
 
-use crate::api::game::abi::types::{HashId, Matrix4x4};
+use crate::api::game::abi::types::Matrix4x4;
 use core::ffi::c_char;
 
 /// Opaque `SSpawnInstanceInfo`; never construct or dereference this in Rust.
@@ -20,10 +20,15 @@ pub enum SpawnedEntity {}
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpawnPriority {
+    /// Lowest declared priority.
     Low = -2,
+    /// Normal declared priority.
     Normal = -1,
+    /// High declared priority.
     High = 1,
+    /// Critical declared priority.
     Critical = 2,
+    /// Medium declared priority; the SDK's numeric ordering is non-monotonic.
     Medium = 9,
 }
 
@@ -33,8 +38,11 @@ pub const SPAWN_PRIORITY_COUNT: i32 = 5;
 /// Outcomes the SDK's handler records in its last-frame arrays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpawnObservation {
+    /// The handler recorded a spawn.
     Spawned,
+    /// The handler recorded a despawn.
     Despawned,
+    /// The handler recorded a failed operation.
     Failed,
 }
 
@@ -43,14 +51,8 @@ pub type SetEntityFileFn = unsafe extern "system" fn(*mut SpawnInstanceInfo, *co
 
 /// `SSpawnInstanceInfo` native constructor and destructor candidates.
 pub type SpawnInfoConstructorFn = unsafe extern "system" fn(*mut SpawnInstanceInfo);
+/// `SSpawnInstanceInfo` native destructor candidate.
 pub type SpawnInfoDestructorFn = unsafe extern "system" fn(*mut SpawnInstanceInfo);
-
-/// `SpawnSystemGetNewSpawnId(const CHashString&)` candidate signature.
-/// The C++ reference return is represented as a raw pointer; ABI is unverified.
-pub type GetNewSpawnIdFn = unsafe extern "system" fn(*const HashId) -> *mut HashId;
-
-/// `SpawnSystemDespawn(const CHashString&)` candidate signature.
-pub type DespawnFn = unsafe extern "system" fn(*const HashId);
 
 /// `SpawnSystemSpawn(SSpawnInstanceInfo*, CMatrix*)` candidate signature.
 pub type SpawnFn = unsafe extern "system" fn(*mut SpawnInstanceInfo, *mut Matrix4x4) -> usize;

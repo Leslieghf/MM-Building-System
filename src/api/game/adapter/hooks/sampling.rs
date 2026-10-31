@@ -1,4 +1,9 @@
-//! Passive player, vehicle, camera, and weapon hook setup and callbacks.
+//! Hook installation and passive player, vehicle, camera, and weapon taps.
+//!
+//! Installation validates the supported executable and expected code bytes
+//! before attaching a hook. Callbacks capture bounded, copied telemetry and
+//! forward to the original target; they do not run scripts or render UI.
+//! Sampling policy and decoding live in `adapter::sampling`.
 use super::super::*;
 
 pub(in crate::api::game::adapter) fn install_camera_raycast_hook(image_base: usize) {

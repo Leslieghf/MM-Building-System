@@ -1,4 +1,9 @@
-//! Game-facing declarations from the pinned Mad Max SDK.
+//! Opaque game types, data layouts, and candidate calls from the pinned SDK.
+//!
+//! Each child module groups declarations by the engine subsystem that owns
+//! them. Header-derived signatures and class names do not establish object
+//! lifetime, exact executable layout, or vtable slot; only validated adapter
+//! paths may make a native call.
 
 pub mod camera;
 pub mod character;

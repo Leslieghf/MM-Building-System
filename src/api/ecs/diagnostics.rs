@@ -1,4 +1,8 @@
-//! Runtime health and callback diagnostics shared as owned ECS data.
+//! Owned runtime health counters and latest callback/effect outcomes.
+//!
+//! Counters are cumulative for the runtime lifetime; latest-outcome fields are
+//! replaced when a newer result arrives. Diagnostics contain no native handles
+//! and may be copied to the UI for presentation without entering game code.
 use super::{IntentOutcome, SpawnOutcome};
 use bevy_ecs::prelude::Resource;
 

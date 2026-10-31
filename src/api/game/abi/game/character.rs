@@ -18,9 +18,3 @@ pub type GetPlayerCharacterFn = unsafe extern "system" fn(*mut CharacterManager)
 
 /// `CCharacter::GetVehiclePtr()` with its explicit C++ `this`.
 pub type GetCharacterVehicleFn = unsafe extern "system" fn(*mut Character) -> *mut Vehicle;
-
-/// `CCharacter::ForceNeutralState()` with its explicit C++ `this`.
-pub type ForceNeutralStateFn = unsafe extern "system" fn(*mut Character);
-
-/// `CCharacterBase::RotateInstantly(float)` with its explicit C++ `this`.
-pub type RotateInstantlyFn = unsafe extern "system" fn(*mut Character, f32);

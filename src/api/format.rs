@@ -1,4 +1,11 @@
-//! Shared display formatting for native metrics and script output.
+//! Shared numeric and vector formatting for diagnostics and scripts.
+//!
+//! # Semantics
+//!
+//! Finite numeric values are truncated toward zero to three fractional digits;
+//! non-finite values retain Rust's standard textual spelling. Vector and angle
+//! formatters use the same precision so UI, logs, and script output agree.
+//! Formatting is presentation-only and never changes the stored value.
 
 const FIXED_DECIMAL_PLACES: u32 = 3;
 const FIXED_SCALE: f64 = 1000.0;
