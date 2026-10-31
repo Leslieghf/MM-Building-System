@@ -343,3 +343,14 @@ Kept the existing single ray and hit-marker cluster, and added a camera-origin m
 
 - Installed script SHA-256: `BB218C353A312FD8161CCB9CC09FB3A4A22710650620D159F01FCEBADDF96D77` (matches `examples\scripts\reticle_ray\main.rhai`).
 - Mad Max remained open. The visible direction comparison awaits user observation; no game launch or process modification was performed.
+
+## 2026-10-31 — general-purpose Rhai raycast API install
+
+Built and installed the committed deferred raycast API and current `reticle_ray` consumer while Mad Max was closed. The script submits one `static_only` query from the copied camera position/direction, displays direction-sign references, and draws a large gizmo cluster when a hit is reported. The debug panel exposes only the optional hit-position row. The ASI build supplies the general Rhai API; the API reference and script package were copied alongside it.
+
+- Installed ASI SHA-256: `AE02582714D8CB12F153C6DA775B31A66A03BE758E34C380ECE09546970C981A` (11,335,680 bytes; source artifact `target\x86_64-pc-windows-msvc\release\madmax_bootstrap.dll`).
+- Previous installed ASI SHA-256: `24BD2BC2AC4A92F77E1C63920141D2EAFB3077BD66477D4CA1DC69459298D5C1`.
+- Backup directory: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\MadMaxModding\backups\general-raycast-20261031-095101`.
+- Installed `API.md` SHA-256: `B459A25913E699480A2B638777B9F47647F6EE04CE73CA56CBD102A1CC971F90`.
+- Installed `reticle_ray\main.rhai` SHA-256: `BB218C353A312FD8161CCB9CC09FB3A4A22710650620D159F01FCEBADDF96D77`; `manifest.toml` SHA-256: `648456D63926CD265CA3836E8843F12F14E6FBBD9E1C74D22D3CCA14B0A4E5F1`.
+- Verification: release build completed; deployed ASI, API, and both package files match their build/repository SHA-256 hashes. Existing warnings concern disabled world-query diagnostic hooks. Mad Max remains closed; in-game script loading and ray behavior await the user's next launch.
