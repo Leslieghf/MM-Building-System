@@ -12,9 +12,6 @@ pub(in crate::api::game::native) struct PlayerSampleState {
     pub(in crate::api::game::native) transform: Option<Matrix4x4>,
     pub(in crate::api::game::native) forward: Option<[f32; 3]>,
     pub(in crate::api::game::native) rotation: Option<[f32; 3]>,
-    pub(in crate::api::game::native) view_rotation: Option<[f32; 3]>,
-    pub(in crate::api::game::native) camera_position: Option<[f32; 3]>,
-    pub(in crate::api::game::native) camera_direction: Option<[f32; 3]>,
     pub(in crate::api::game::native) velocity: Option<[f32; 3]>,
     pub(in crate::api::game::native) acceleration: Option<[f32; 3]>,
     pub(in crate::api::game::native) sampled_at: Option<Instant>,
@@ -32,6 +29,24 @@ pub(in crate::api::game::native) struct VehicleSampleState {
     pub(in crate::api::game::native) sampled_at: Option<Instant>,
 }
 
+/// Camera pose has its own cadence because reticle queries need current view
+/// geometry even while the heavier player/vehicle telemetry remains throttled.
+#[derive(Default)]
+pub(in crate::api::game::native) struct CameraSampleState {
+    pub(in crate::api::game::native) position: Option<[f32; 3]>,
+    pub(in crate::api::game::native) direction: Option<[f32; 3]>,
+    pub(in crate::api::game::native) view_rotation: Option<[f32; 3]>,
+    pub(in crate::api::game::native) sampled_at: Option<Instant>,
+}
+
+pub(in crate::api::game::native) static CAMERA_SAMPLE: Mutex<CameraSampleState> =
+    Mutex::new(CameraSampleState {
+        position: None,
+        direction: None,
+        view_rotation: None,
+        sampled_at: None,
+    });
+
 pub(in crate::api::game::native) static PLAYER_SAMPLE: Mutex<PlayerSampleState> =
     Mutex::new(PlayerSampleState {
         status: 0,
@@ -39,9 +54,6 @@ pub(in crate::api::game::native) static PLAYER_SAMPLE: Mutex<PlayerSampleState> 
         transform: None,
         forward: None,
         rotation: None,
-        view_rotation: None,
-        camera_position: None,
-        camera_direction: None,
         velocity: None,
         acceleration: None,
         sampled_at: None,

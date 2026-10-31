@@ -1012,13 +1012,13 @@ mod math_integration_tests {
 #[cfg(test)]
 mod debug_draw_tests {
     use super::{
-        DebugPrimitive, GamePostSimContext, InvocationDebugDraw, InvocationLog,
-        InvocationVehicleWrite, register_v1,
+        DebugPrimitive, GamePostSimContext, InvocationDebugDraw, InvocationLog, InvocationRaycast,
+        InvocationVehicleWrite, RaycastTicketStore, register_v1,
     };
     use crate::api::ecs::GameSnapshot;
     use crate::api::game::abi::types::Matrix4x4;
     use crate::api::scripts::*;
-    use rhai::{Dynamic, Engine, Map};
+    use rhai::{CallFnOptions, Dynamic, Engine, Map};
 
     #[test]
     fn debug_line_is_available_only_during_its_bounded_invocation() {
@@ -1200,7 +1200,9 @@ mod debug_draw_tests {
         let script = include_str!("../../../examples/scripts/reticle_ray/main.rhai");
         let mut engine = Engine::new();
         register_v1(&mut engine);
-        let source = format!("{script}\non_post_sim(ctx);");
+        let ast = engine
+            .compile(script)
+            .expect("reticle script should compile");
         let (sink, _receiver) = crate::api::scripts::console::event_channel();
         let event = crate::api::scripts::ScriptEvent {
             request_id: None,
@@ -1216,8 +1218,10 @@ mod debug_draw_tests {
             column: None,
             text: String::new(),
         };
-        let log = InvocationLog::new(crate::api::scripts::ScriptEventSink(sink), event.clone());
-        let raycast = InvocationRaycast::new(true, true, event, 1, RaycastTicketStore::default());
+        let event_sink = crate::api::scripts::ScriptEventSink(sink);
+        let log = InvocationLog::new(event_sink.clone(), event.clone());
+        let tickets = RaycastTicketStore::default();
+        let raycast = InvocationRaycast::new(true, true, event.clone(), 1, tickets.clone());
         let snapshot = GameSnapshot {
             callback_sequence: 1,
             sample_sequence: 1,
@@ -1228,22 +1232,67 @@ mod debug_draw_tests {
         let context = GamePostSimContext::new_with_raycast(
             snapshot,
             log,
-            &["game.read".to_owned(), "game.raycast".to_owned()],
+            &[
+                "debug.draw".to_owned(),
+                "game.read".to_owned(),
+                "game.raycast".to_owned(),
+            ],
             InvocationVehicleWrite::new(false, false, false),
             raycast.clone(),
-            InvocationDebugDraw::new(false, 32, 256),
+            InvocationDebugDraw::new(true, 32, 256),
         );
         let mut scope = rhai::Scope::new();
-        scope.push("state", Map::new());
-        scope.push("ctx", context);
+        let mut state = Map::new();
+        state.insert("ticket".into(), Dynamic::UNIT);
+        state.insert("callback_sequence".into(), Dynamic::from(0_i64));
+        scope.push("state", state);
         engine
-            .eval_with_scope::<()>(&mut scope, &source)
+            .call_fn_with_options::<()>(
+                CallFnOptions::new().eval_ast(false),
+                &mut scope,
+                &ast,
+                "on_post_sim",
+                (context,),
+            )
             .expect("reticle callback should request the camera ray");
         let request = raycast
             .finish()
             .expect("camera ray request should be queued");
         assert_eq!(request.origin, [0.0, 1.0, 2.0]);
         assert_eq!(request.direction, [0.0, 0.0, -1.0]);
+
+        let next_raycast = InvocationRaycast::new(true, true, event.clone(), 2, tickets);
+        let next_context = GamePostSimContext::new_with_raycast(
+            GameSnapshot {
+                callback_sequence: 2,
+                sample_sequence: 1,
+                camera_position: Some([0.0, 1.0, 2.0]),
+                camera_direction: Some([0.0, 0.0, -1.0]),
+                ..GameSnapshot::default()
+            },
+            InvocationLog::new(event_sink, event),
+            &[
+                "debug.draw".to_owned(),
+                "game.read".to_owned(),
+                "game.raycast".to_owned(),
+            ],
+            InvocationVehicleWrite::new(false, false, false),
+            next_raycast.clone(),
+            InvocationDebugDraw::new(true, 32, 256),
+        );
+        engine
+            .call_fn_with_options::<()>(
+                CallFnOptions::new().eval_ast(false),
+                &mut scope,
+                &ast,
+                "on_post_sim",
+                (next_context,),
+            )
+            .expect("reticle callback should refresh when callback sequence advances");
+        assert!(
+            next_raycast.finish().is_some(),
+            "a fresh callback should request a fresh camera ray even if telemetry sample sequence did not change"
+        );
     }
 
     #[test]

@@ -162,9 +162,8 @@ fn query_with_filter(
             ptr::null(),
         )
     };
-    let fraction = (output.hit_fraction.is_finite()
-        && (0.0..=1.0).contains(&output.hit_fraction))
-    .then_some(output.hit_fraction);
+    let fraction = (output.hit_fraction.is_finite() && (0.0..=1.0).contains(&output.hit_fraction))
+        .then_some(output.hit_fraction);
     let position = fraction
         .filter(|fraction| *fraction < 1.0)
         .and_then(|fraction| ray.point_at(max_distance * fraction))

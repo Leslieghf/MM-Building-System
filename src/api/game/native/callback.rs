@@ -21,6 +21,9 @@ pub(super) fn run_bevy_game_frame(thread_id: u32, overlap_epoch: u64) {
     }
     synchronize_game_input_focus(overlap_epoch);
     trace_game_runtime_stage(1, "input-focus synchronization returned");
+    if callback_is_current(overlap_epoch) {
+        sample_camera_for_callback();
+    }
     if sample_game_state_if_due(overlap_epoch) {
         trace_game_runtime_stage(2, "game-state probe returned");
     }

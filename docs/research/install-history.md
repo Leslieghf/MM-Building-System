@@ -354,3 +354,13 @@ Built and installed the committed deferred raycast API and current `reticle_ray`
 - Installed `API.md` SHA-256: `B459A25913E699480A2B638777B9F47647F6EE04CE73CA56CBD102A1CC971F90`.
 - Installed `reticle_ray\main.rhai` SHA-256: `BB218C353A312FD8161CCB9CC09FB3A4A22710650620D159F01FCEBADDF96D77`; `manifest.toml` SHA-256: `648456D63926CD265CA3836E8843F12F14E6FBBD9E1C74D22D3CCA14B0A4E5F1`.
 - Verification: release build completed; deployed ASI, API, and both package files match their build/repository SHA-256 hashes. Existing warnings concern disabled world-query diagnostic hooks. Mad Max remains closed; in-game script loading and ray behavior await the user's next launch.
+
+## 2026-10-31 — raycast hit-marker stability fix
+
+The stability audit found that the reticle script read a nonexistent `ctx.frame.callback_sequence` field, although the API publishes the counter as `ctx.frame.sequence`. Rhai treated the missing property as `()`, so the script requested the first ray and then stopped refreshing it. The script now uses the published field. Camera pose is sampled every accepted game callback, independently of the 50 ms player/vehicle telemetry interval. The visual hit marker was reduced to a compact surface sphere plus x-ray sphere so stale/incorrect locations are easier to distinguish without a large overlapping cluster.
+
+- Installed ASI SHA-256: `1C9A891BC54FB78AA85EB425259337D8C713742BEADA84508C4FADEB21851D3A` (matches `target\x86_64-pc-windows-msvc\release\madmax_bootstrap.dll`).
+- Installed script SHA-256: `F7E1CFE87860F351478BDCBD961980F8A523FDF06ECDC0D049E16A259ED14C3F` (matches `examples\scripts\reticle_ray\main.rhai`).
+- Previous ASI and script preserved in `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\MadMaxModding\backups\raycast-stability-20261031-141047`.
+- `cargo fmt --all -- --check`, Windows x64 tests (83 passed), release build, and `git diff --check` completed. Disabled world-query diagnostic hooks still produce dead-code warnings.
+- Mad Max was not running during installation. No game launch or in-game visual verification has been performed; camera-sign and exact reticle alignment remain open until the user checks this build.

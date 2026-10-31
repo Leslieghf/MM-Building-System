@@ -41,7 +41,7 @@ pub(in crate::api::game::native) fn probe_player_transform(player: *mut Characte
     let transform = match read_player_transform(player) {
         Ok(transform) => transform,
         Err(status) => {
-            publish_player_sample(status, None, None, None);
+            publish_player_sample(status, None, None);
             return;
         }
     };
@@ -51,22 +51,12 @@ pub(in crate::api::game::native) fn probe_player_transform(player: *mut Characte
         transform.values[3][2],
     ];
     let rotation = rotation_xyz_degrees(&transform);
-    let camera_matrix = sample_camera_matrix();
-    let view_rotation = camera_matrix.as_ref().and_then(rotation_xyz_degrees);
-    publish_player_sample(10, Some(position), rotation, view_rotation);
+    publish_player_sample(10, Some(position), rotation);
     let mut player_sample = PLAYER_SAMPLE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     player_sample.transform = Some(transform);
     player_sample.forward = horizontal_forward(&transform);
-    player_sample.camera_position = camera_matrix
-        .as_ref()
-        .map(|matrix| matrix.translation())
-        .map(|position| [position.x, position.y, position.z]);
-    player_sample.camera_direction = camera_matrix
-        .as_ref()
-        .and_then(WorldQueryRayInput::from_camera_matrix)
-        .map(|ray| [ray.direction.x, ray.direction.y, ray.direction.z]);
 }
 
 fn read_player_transform(player: *mut Character) -> Result<Matrix4x4, u8> {

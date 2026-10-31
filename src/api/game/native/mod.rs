@@ -714,12 +714,7 @@ fn publish_vehicle_sample(sample_data: Option<VehicleTelemetry>) {
     .then_some(now);
 }
 
-fn publish_player_sample(
-    status: u8,
-    position: Option<[f32; 3]>,
-    rotation: Option<[f32; 3]>,
-    view_rotation: Option<[f32; 3]>,
-) {
+fn publish_player_sample(status: u8, position: Option<[f32; 3]>, rotation: Option<[f32; 3]>) {
     let now = Instant::now();
     let mut sample = PLAYER_SAMPLE
         .lock()
@@ -752,9 +747,6 @@ fn publish_player_sample(
     sample.transform = None;
     sample.forward = None;
     sample.rotation = rotation;
-    sample.view_rotation = view_rotation;
-    sample.camera_position = None;
-    sample.camera_direction = None;
     sample.velocity = velocity;
     sample.acceleration = acceleration;
     sample.sampled_at = position.map(|_| now);
