@@ -7,6 +7,11 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule, SingleThreadedExecutor};
 
+/// Create the single-threaded [`App`] and its ordered game callback schedule.
+///
+/// The returned app owns copied frame resources and mod-facing entities. Native
+/// pointers and game calls remain outside this schedule.
+///
 pub fn create_game_app() -> App {
     let mut app = App::empty();
     let mut schedule = Schedule::new(MadMaxPostSim);
@@ -70,6 +75,9 @@ fn project_frame_to_proxies(
     }
 }
 
+/// Replace the current frame resource with an owned [`GameSnapshot`].
+///
+/// Systems observe the replacement when the schedule next runs.
 pub fn update_game_frame(app: &mut App, snapshot: GameSnapshot) {
     app.world_mut().insert_resource(CurrentGameFrame(snapshot));
 }

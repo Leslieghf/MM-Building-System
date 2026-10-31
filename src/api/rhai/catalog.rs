@@ -1,7 +1,12 @@
-//! Single source of truth for the user-facing script API reference and runtime registry.
+//! Single source for the script API catalog and generated [`render_markdown`] reference.
 
+/// Current script-visible contract version.
+///
+/// Packages declare this value as `api_version` in their manifest. A package
+/// targeting a different version is rejected during validation.
 pub const API_VERSION: u32 = 1;
 
+/// Capability identifiers accepted by API v1 manifests.
 pub const API_CAPABILITIES: &[&str] = &[
     "debug.draw",
     "game.read",
@@ -10,12 +15,19 @@ pub const API_CAPABILITIES: &[&str] = &[
     "log",
 ];
 
+/// Metadata used to validate scripts and generate the [`API_CALLBACKS`] reference.
 pub struct ApiCallbackDoc {
+    /// Required script function name.
     pub callback: &'static str,
+    /// Manifest phase identifier.
     pub phase: &'static str,
+    /// Context values visible to the callback.
     pub values: &'static [&'static str],
+    /// Context methods visible to the callback.
     pub methods: &'static [&'static str],
+    /// Availability semantics shared with the generated guide.
     pub unavailable: &'static str,
+    /// Callback scheduling and effect semantics.
     pub effect: &'static str,
 }
 

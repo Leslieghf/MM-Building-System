@@ -9,9 +9,9 @@
 //!
 //! # Native access
 //!
-//! Game-specific addresses, layouts, hooks, and calls are isolated in
-//! [`api::game`]. Extensions receive copied values and cannot retain native
-//! pointers through the public API.
+//! Game-specific addresses, layouts, hooks, and calls live in the low-level
+//! [`api::game`] implementation module. Extensions should use the owned
+//! [`api::ecs`] contracts; they cannot retain native pointers through that API.
 
 pub mod api;
 mod devtools;

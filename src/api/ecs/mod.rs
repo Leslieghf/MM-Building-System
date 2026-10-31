@@ -1,4 +1,9 @@
-//! Owned Bevy-facing contracts, schedules, and bounded effects for mods.
+//! Owned Rust modding contracts: copied [`GameSnapshot`] frames, ordered
+//! [`MadMaxPostSim`] schedules, input snapshots, diagnostics, and bounded effects.
+//!
+//! Systems operate on copied values. Native reads and writes are performed by
+//! the host adapter after the schedule returns; see [`crate::api::game`] for
+//! that build-specific boundary and [`crate::api::scripts`] for the Rhai API.
 mod channels;
 mod config;
 mod diagnostics;

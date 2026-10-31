@@ -8,33 +8,64 @@ use rhai::AST;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
+/// Maximum UTF-8 bytes accepted for `manifest.toml`.
 pub const MAX_MANIFEST_BYTES: usize = 8 * 1024;
+/// Maximum combined manifest and Rhai source size accepted for a package.
 pub const MAX_PACKAGE_BYTES: usize = MAX_MANIFEST_BYTES + MAX_SOURCE_BYTES;
+/// Maximum callback entries allowed in one manifest.
 pub const MAX_CALLBACKS_PER_SCRIPT: usize = 2;
+/// Maximum requested capabilities allowed in one manifest.
 pub const MAX_CAPABILITIES_PER_SCRIPT: usize = 16;
 
 #[derive(Debug, Clone)]
+/// Display-safe summary of a parsed package manifest.
 pub struct ScriptManifestSummary {
+    /// Declared package ID.
     pub id: String,
+    /// Required scripting API version.
     pub api_version: u32,
+    /// Callback phase and function pairs.
     pub callbacks: Vec<String>,
+    /// Capability IDs requested by the package.
     pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
+/// One directory returned by package discovery, valid or invalid.
 pub struct DiscoveredScript {
+    /// Directory name as displayed by the host.
     pub package_name: String,
+    /// Validated package ID, absent when validation failed.
     pub id: Option<ScriptId>,
+    /// Parsed manifest summary, absent when parsing failed.
     pub manifest: Option<ScriptManifestSummary>,
+    /// Validation or discovery issue, if any.
     pub issue: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Parsed `manifest.toml` contract for a Rhai package.
+///
+/// # Example
+///
+/// ```toml
+/// id = "vehicle_watch"
+/// api_version = 1
+/// capabilities = ["game.read", "log"]
+///
+/// [callbacks]
+/// "game.post_sim" = "on_post_sim"
+/// on_run = "on_run"
+/// ```
 pub struct ScriptManifest {
+    /// Package identifier; it must match the package directory and request ID.
     pub id: String,
+    /// Version of the script-visible API required by this package.
     pub api_version: u32,
+    /// Supported phase IDs mapped to one-argument function names.
     pub callbacks: BTreeMap<String, String>,
+    /// Capability identifiers granted to this package.
     pub capabilities: Vec<String>,
 }
 impl ScriptManifest {
@@ -150,8 +181,14 @@ mod tests {
     }
 }
 
-/// Only compile constructors can create a validated, bounded candidate.
-/// Top-level statements are never evaluated.
+/// Compiled package candidate ready for callback-boundary activation.
+///
+/// Only the constructors can create a candidate with a validated manifest and
+/// bounded source. Package top-level statements are compiled but never run;
+/// callable functions must be explicitly registered by the manifest.
+///
+/// See [`ScriptManifest`] for the package contract and [`super::manager::ScriptManager`]
+/// for activation and generation replacement behavior.
 pub struct PreparedScript {
     request_id: u64,
     manifest: ScriptManifest,
@@ -160,6 +197,31 @@ pub struct PreparedScript {
     id: ScriptId,
 }
 impl PreparedScript {
+    /// Compile a source string against API v1 and construct an in-memory package.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid callback declarations, unsupported or
+    /// duplicate capabilities, oversized source, or Rhai compilation failure.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::collections::BTreeMap;
+    /// use madmax_bootstrap::api::scripts::{PreparedScript, ScriptId, ScriptPhaseId};
+    ///
+    /// let mut callbacks = BTreeMap::new();
+    /// callbacks.insert(ScriptPhaseId::GamePostSim, "on_post_sim".to_owned());
+    /// let id = ScriptId::parse("example").expect("valid example ID");
+    /// let package = PreparedScript::compile(
+    ///     id,
+    ///     "fn on_post_sim(ctx) {}",
+    ///     callbacks,
+    ///     None,
+    ///     vec!["game.read".to_owned()],
+    /// ).expect("valid example package");
+    /// let _ = package;
+    /// ```
     pub fn compile(
         id: ScriptId,
         source: &str,
@@ -214,9 +276,11 @@ impl PreparedScript {
             id,
         })
     }
+    /// Return the request identifier associated with this prepared package.
     pub fn request_id(&self) -> u64 {
         self.request_id
     }
+    /// Return the validated package manifest.
     pub fn manifest(&self) -> &ScriptManifest {
         &self.manifest
     }

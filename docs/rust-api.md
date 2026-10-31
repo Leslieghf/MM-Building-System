@@ -34,8 +34,9 @@ There is currently no public third-party registration or runtime loading mechani
 | `api::ecs` | Owned snapshots, ECS projection, schedules, diagnostics, and bounded intents. |
 | `api::scripts` | Script packages, lifecycle requests, console transport, and events. |
 | `api::rhai` | Versioned Rhai context registration and API catalog. |
-| `api::game::abi` | Build identity and reverse-engineered native ABI declarations. Use only through reviewed adapter code. |
-| `api::game::adapter` | Private native hook, memory, sampling, and effect implementation. |
+| `api::game` | Crate-private native integration boundary; not part of the supported modding API. |
+
+The build metadata and raw ABI declarations are intentionally crate-private. Rust systems and scripts must use owned ECS data and typed intents instead of depending on reverse-engineered native layouts.
 
 ## Safety
 

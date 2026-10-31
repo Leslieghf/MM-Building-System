@@ -14,30 +14,62 @@ pub(crate) fn next_request_id() -> Result<u64, &'static str> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Typed console operation submitted to the runtime.
+///
+/// Most variants are produced by [`ConsoleCommand::parse`]. Auto-reload is a
+/// UI-only request and is created through the typed interface.
 pub enum ConsoleCommand {
+    /// Show command help, optionally scoped to a topic.
     Help(Option<String>),
+    /// List supported input-key names.
     ShowKeys,
+    /// List current key bindings.
     ShowBinds,
+    /// Bind an input key ID to a console command string.
     Bind {
+        /// Stable ID returned by [`InputKey::id`](crate::api::ecs::input_key::InputKey::id).
         key: u32,
+        /// Quoted command text to execute when the key is pressed.
         command: String,
     },
+    /// Remove the binding for an input key ID.
     Unbind {
+        /// Stable ID returned by [`InputKey::id`](crate::api::ecs::input_key::InputKey::id).
         key: u32,
     },
+    /// Rescan and list script packages without compiling their source.
     ScriptList,
+    /// Compile and load one package.
     ScriptLoad(ScriptId),
+    /// Compile and activate a replacement package generation.
     ScriptReload(ScriptId),
+    /// Invoke one package's registered `on_run` callback.
     ScriptRun(ScriptId),
+    /// Unload one package generation.
     ScriptUnload(ScriptId),
+    /// Request a status row for one package.
     ScriptStatus(ScriptId),
     /// UI-only typed request; deliberately absent from the text parser.
-    ScriptAutoReload {
-        id: ScriptId,
-        enabled: bool,
-    },
+    ScriptAutoReload { id: ScriptId, enabled: bool },
 }
 impl ConsoleCommand {
+    /// Parse one bounded command string into a typed operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a static usage or validation message for malformed syntax,
+    /// unsupported keys, reserved hotkeys, invalid package IDs, or input over
+    /// [`super::MAX_COMMAND_BYTES`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use madmax_bootstrap::api::scripts::console::ConsoleCommand;
+    ///
+    /// let command = ConsoleCommand::parse("script load vehicle_watch")
+    ///     .expect("valid script load command");
+    /// assert!(matches!(command, ConsoleCommand::ScriptLoad(_)));
+    /// ```
     pub fn parse(input: &str) -> Result<Self, &'static str> {
         if input.len() > MAX_COMMAND_BYTES {
             return Err("console input exceeds 256 UTF-8 bytes");
@@ -90,6 +122,7 @@ impl ConsoleCommand {
             _ => Err("unknown command; use help"),
         }
     }
+    /// Return the affected package ID for a script command.
     pub fn script(&self) -> Option<&ScriptId> {
         match self {
             Self::ScriptLoad(id)
@@ -152,7 +185,10 @@ fn parse_bind_command(input: &str) -> Result<ConsoleCommand, &'static str> {
 }
 
 #[derive(Debug, Clone)]
+/// Console operation paired with its host-generated correlation ID.
 pub struct ConsoleRequest {
+    /// Monotonic identifier used to match output to the command.
     pub request_id: u64,
+    /// Parsed operation to process at a runtime boundary.
     pub command: ConsoleCommand,
 }

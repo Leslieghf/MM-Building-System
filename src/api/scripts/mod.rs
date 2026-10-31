@@ -2,6 +2,12 @@
 //!
 //! This module defines the host-side package lifecycle and event contract.
 //! Script-visible names and semantics are cataloged in [`crate::api::rhai`].
+//! Start with [`ScriptId`](crate::api::scripts::ScriptId),
+//! [`PreparedScript`](crate::api::scripts::package::PreparedScript), and
+//! [`ScriptManager`](crate::api::scripts::manager::ScriptManager); bounded
+//! diagnostics use [`ScriptEvent`](crate::api::scripts::ScriptEvent) and
+//! [`event_channel`](crate::api::scripts::event_channel). Package files are
+//! described in the [scripting guide](https://github.com/Leslieghf/MM-Building-System/blob/main/docs/scripting.md).
 pub mod auto_reload;
 pub mod console;
 pub mod engine;

@@ -1,24 +1,37 @@
 //! Rhai engine limits, sandbox configuration, and package compilation interface.
 use rhai::Engine;
+/// Maximum Rhai operations per callback evaluation.
 pub const MAX_OPERATIONS: u64 = 20_000;
+/// Maximum nested Rhai function-call depth.
 pub const MAX_CALL_LEVELS: usize = 16;
+/// Maximum expression nesting depth.
 pub const MAX_EXPRESSION_DEPTH: usize = 32;
+/// Maximum function-expression nesting depth.
 pub const MAX_FUNCTION_EXPRESSION_DEPTH: usize = 32;
+/// Maximum variables in a compiled callback scope.
 pub const MAX_VARIABLES: usize = 128;
+/// Maximum bytes in one script string value.
 pub const MAX_STRING_BYTES: usize = 4096;
+/// Maximum items in one script array.
 pub const MAX_ARRAY_ITEMS: usize = 256;
+/// Maximum entries in one script map.
 pub const MAX_MAP_ITEMS: usize = 128;
+/// Maximum functions in one package source.
 pub const MAX_FUNCTIONS: usize = 64;
+/// Maximum Rhai source bytes accepted by package compilation.
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024;
 #[derive(Debug, Clone, Copy, Default)]
-/// Factory for the host's constrained Rhai engine configuration.
+/// Factory for the host's constrained [`Engine`] configuration.
+///
+/// Limits are declared by the `MAX_*` constants in this module. The factory
+/// installs no filesystem, process, or native-call functions.
 pub struct RhaiEngineFactory;
 impl RhaiEngineFactory {
-    /// Create an engine with the package limits and API v1 bindings installed.
+    /// Create an engine with the host's API v1 limits and registered functions.
     pub fn create(self) -> Engine {
         Self::build()
     }
-    /// Create an engine with the package limits and API v1 bindings installed.
+    /// Build an engine without owning a factory value.
     pub fn build() -> Engine {
         let mut engine = Engine::new();
         engine

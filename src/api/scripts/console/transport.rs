@@ -20,15 +20,24 @@ pub struct ConsoleRequestSender {
     bindings: BTreeMap<u32, String>,
 }
 impl ConsoleRequestSender {
+    /// Read current UI-side key-to-command bindings.
     pub fn bindings(&self) -> &BTreeMap<u32, String> {
         &self.bindings
     }
+    /// Associate a stable input-key ID with command text.
     pub fn bind(&mut self, key: u32, command: String) {
         self.bindings.insert(key, command);
     }
+    /// Remove a binding and return whether one existed.
     pub fn unbind(&mut self, key: u32) -> bool {
         self.bindings.remove(&key).is_some()
     }
+    /// Submit a typed command to the game callback.
+    ///
+    /// # Errors
+    ///
+    /// Returns a console event if request IDs are exhausted or the bounded
+    /// request channel is full or disconnected. Rejected commands are not queued.
     pub fn submit(&mut self, command: ConsoleCommand) -> Result<u64, ConsoleEvent> {
         let request_id = next_request_id()
             .map_err(|text| ConsoleEvent::new(None, ConsoleSeverity::Error, text))?;
@@ -51,12 +60,19 @@ impl ConsoleRequestSender {
             })?;
         Ok(request_id)
     }
+    /// Parse and submit one command string.
+    ///
+    /// # Errors
+    ///
+    /// Returns a console event when parsing fails or the bounded request
+    /// channel rejects the command.
     pub fn submit_input(&mut self, input: &str) -> Result<u64, ConsoleEvent> {
         let command = ConsoleCommand::parse(input)
             .map_err(|text| ConsoleEvent::new(None, ConsoleSeverity::Error, text))?;
         self.submit(command)
     }
 }
+/// Create the bounded console request sender and game-side receiver.
 pub fn request_channel() -> (ConsoleRequestSender, Receiver<ConsoleRequest>) {
     let (sender, receiver) = sync_channel(REQUEST_QUEUE_CAPACITY);
     (
@@ -69,15 +85,18 @@ pub fn request_channel() -> (ConsoleRequestSender, Receiver<ConsoleRequest>) {
 }
 
 #[derive(Clone)]
+/// Non-blocking publisher for bounded console output events.
 pub struct ConsoleEventSink {
     sender: SyncSender<ConsoleEvent>,
     dropped: Arc<AtomicU64>,
 }
+/// Non-blocking consumer for console output and queue-drop diagnostics.
 pub struct ConsoleEventReceiver {
     receiver: Receiver<ConsoleEvent>,
     dropped: Arc<AtomicU64>,
 }
 impl ConsoleEventSink {
+    /// Publish an event, truncating text and counting any dropped event.
     pub fn emit(&self, mut event: ConsoleEvent) {
         event.text = bounded_text(&event.text, MAX_EVENT_BYTES);
         if self.sender.try_send(event).is_err() {
@@ -91,13 +110,16 @@ impl ConsoleEventSink {
     }
 }
 impl ConsoleEventReceiver {
+    /// Receive one event without waiting for future output.
     pub fn try_recv(&self) -> Result<ConsoleEvent, TryRecvError> {
         self.receiver.try_recv()
     }
+    /// Take and reset the count of events dropped because the queue was full.
     pub fn take_dropped(&self) -> u64 {
         self.dropped.swap(0, Ordering::Relaxed)
     }
 }
+/// Create the bounded console output event channel.
 pub fn event_channel() -> (ConsoleEventSink, ConsoleEventReceiver) {
     let (sender, receiver) = sync_channel(crate::api::scripts::EVENT_QUEUE_CAPACITY);
     let dropped = Arc::new(AtomicU64::new(0));

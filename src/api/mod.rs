@@ -2,7 +2,8 @@
 //!
 //! # Modules
 //!
-//! - [`game`] confines the supported executable's ABI and guarded native adapter.
+//! - [`game`] contains the supported executable's raw ABI and guarded adapter.
+//!   It is an implementation boundary, not a supported extension surface.
 //! - [`ecs`] defines owned frame data, mod-system schedules, and bounded effects.
 //! - [`rhai`] defines the versioned script context and generated API catalog.
 //! - [`scripts`] owns package validation, compilation, lifecycle, and console transport.
