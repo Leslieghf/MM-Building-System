@@ -86,22 +86,20 @@ const API_METHODS: &[&str] = &[
     "ctx.gizmos.transformed_axes(transform: array[16], length: number) -> () [debug.draw; native RGB basis axes from the supplied row-major transform; length 0.1..1000]",
     "ctx.gizmos.line(start: vector, end: vector, color: RGBA) -> () [debug.draw; one-frame world-space line]",
     "ctx.gizmos.arrow(start: vector, end: vector, color: RGBA) -> () [debug.draw; one-frame world-space auto-width arrow]",
-    "ctx.gizmos.sphere(center: vector, radius: number, color: RGBA) -> () [debug.draw; slot 26; wire sphere]",
-    "ctx.gizmos.sparse_sphere(center: vector, radius: number, color: RGBA) -> () [debug.draw; slot 27; sparse queued wire sphere]",
-    "ctx.gizmos.tessellated_sphere(center: vector, radius: number, color: RGBA) -> () [debug.draw; slot 28; dense wire sphere; geometry budget cost 60]",
-    "ctx.gizmos.aabb(minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; slot 31; world-axis-aligned box]",
-    "ctx.gizmos.transformed_aabb(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; slot 34; translation at elements 12–14]",
-    "ctx.gizmos.queued_transformed_aabb(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; slot 35; alternate queued transformed box]",
-    "ctx.gizmos.bounds_sphere(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; experimental slot 36; transform argument inferred as a matrix pointer]",
-    "ctx.gizmos.bounds_cylinder(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; experimental slot 37; transform argument inferred as a matrix pointer]",
-    "ctx.gizmos.bounds_capsule(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; experimental slot 38; transform argument inferred as a matrix pointer]",
-    "ctx.gizmos.bounds_convex_vertices(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; experimental slot 39; this accepts bounds, not a custom vertex buffer]",
+    "ctx.gizmos.wire_sphere(center: vector, radius: number, color: RGBA) -> () [debug.draw; radial wire sphere; native slot 26]",
+    "ctx.gizmos.xray_sphere(center: vector, radius: number, color: RGBA) -> () [debug.draw; radial wire sphere observed through walls; native slot 27]",
+    "ctx.gizmos.surface_wire_sphere(center: vector, radius: number, color: RGBA) -> () [debug.draw; surface-following wire rings; native slot 28; geometry budget cost 60]",
+    "ctx.gizmos.wire_aabb(minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; world-axis-aligned wire box; native slot 31]",
+    "ctx.gizmos.wire_box(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; transformed wire box; native slot 34]",
+    "ctx.gizmos.xray_wire_box(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; transformed wire box observed through walls; native slot 35]",
+    "ctx.gizmos.solid_cube(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; solid cube; observed with native Havok sphere-shape slot 36]",
+    "ctx.gizmos.solid_arrow(transform: MadMaxMatrix4x4, minimum: vector, maximum: vector, color: RGBA) -> () [debug.draw; solid 3D arrow; observed with native Havok capsule-shape slot 38]",
     "ctx.vehicle.set_velocity(#{x: number, y: number, z: number}) -> () [game.read + game.vehicle.write; finite components in [-250,250] units/s; one request per invocation; game.post_sim native adapter]",
 ];
 const API_ERRORS: &str = "Undeclared capabilities, malformed values, non-finite numbers, and values outside documented bounds raise script errors. A callback error disables that script generation; a failed reload leaves the active generation running.";
 const API_AVAILABILITY: &str = "Unavailable values are `()`. `available` means copied object data exists; individual fields can still be unavailable. `sample_age_seconds` reports the age of the copied sample. Input comes from the mod's Hudhook/ImGui event stream, not the game's native keymap or controller polling API.";
 const API_COORDINATES: &str = "Vectors use +X right, +Y up, and -Z forward. Transforms are 16-number row-major arrays in Mad Max matrix order, with translation at indices 12–14. Vector maps use numeric `x`, `y`, and `z`; RGBA maps use `r`, `g`, `b`, and `a`. Math inputs are not mutated; returned vectors are fresh maps.";
-const API_LIMITS: &str = "Math vector components and results are finite and within [-100000, 100000]. Scalar math arguments/results must be finite; `lerp` requires `t` in [0, 1]. `normalize` and `direction` return `()` for magnitude/distance <= 1e-12. Debug coordinates and transforms are finite and within ±100000, colors are in [0, 1], and radii are in [0.01, 10000]. Debug drawing is limited to 32 primitives and 256 estimated geometry segments per invocation, and 128 primitives and 512 segments per game callback. Vehicle velocity writes require copied velocity and are published only after successful callbacks. Bounds-shape methods remain experimental; their matrix-pointer argument and render visibility/lifetime depend on native behavior.";
+const API_LIMITS: &str = "Math vector components and results are finite and within [-100000, 100000]. Scalar math arguments/results must be finite; `lerp` requires `t` in [0, 1]. `normalize` and `direction` return `()` for magnitude/distance <= 1e-12. Debug coordinates and transforms are finite and within ±100000, colors are in [0, 1], and radii are in [0.01, 10000]. Debug drawing is limited to 32 primitives and 256 estimated geometry segments per invocation, and 128 primitives and 512 segments per game callback. Vehicle velocity writes require copied velocity and are published only after successful callbacks.";
 
 /// Callback context, capability, and effect contracts for the current script API.
 ///
@@ -158,11 +156,10 @@ pub fn render_markdown() -> String {
 }
 
 fn render_methods(output: &mut String, methods: &[&str]) {
-    let groups: [(&str, &[&str]); 5] = [
+    let groups: [(&str, &[&str]); 4] = [
         ("Math", &["ctx.math."]),
         ("Input", &["ctx.input."]),
         ("Logging and formatting", &["ctx.log.", "ctx.format."]),
-        ("Debug drawing", &["ctx.gizmos."]),
         ("Vehicle effects", &["ctx.vehicle."]),
     ];
     for (title, prefixes) in groups {
@@ -170,6 +167,46 @@ fn render_methods(output: &mut String, methods: &[&str]) {
             .iter()
             .filter(|method| prefixes.iter().any(|prefix| method.starts_with(prefix)));
         let rows: Vec<_> = matching.collect();
+        if rows.is_empty() {
+            continue;
+        }
+        output.push_str(&format!("\n### {title}\n\n"));
+        for method in rows {
+            output.push_str(&format!("- `{method}`\n"));
+        }
+    }
+    render_debug_methods(output, methods);
+}
+
+fn render_debug_methods(output: &mut String, methods: &[&str]) {
+    let groups: [(&str, fn(&str) -> bool); 4] = [
+        ("Lines and orientation", |m| {
+            [
+                "ctx.gizmos.axes(",
+                "ctx.gizmos.transformed_axes(",
+                "ctx.gizmos.line(",
+                "ctx.gizmos.arrow(",
+            ]
+            .iter()
+            .any(|prefix| m.starts_with(prefix))
+        }),
+        ("Wire geometry", |m| {
+            [
+                "ctx.gizmos.wire_sphere(",
+                "ctx.gizmos.surface_wire_sphere(",
+                "ctx.gizmos.wire_aabb(",
+                "ctx.gizmos.wire_box(",
+            ]
+            .iter()
+            .any(|prefix| m.starts_with(prefix))
+        }),
+        ("Through-wall wire geometry", |m| {
+            m.starts_with("ctx.gizmos.xray_")
+        }),
+        ("Solid debug shapes", |m| m.starts_with("ctx.gizmos.solid_")),
+    ];
+    for (title, matches) in groups {
+        let rows: Vec<_> = methods.iter().filter(|method| matches(method)).collect();
         if rows.is_empty() {
             continue;
         }

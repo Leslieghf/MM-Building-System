@@ -24,10 +24,10 @@ pub(super) const CDEBUG_RENDERER_TESSELLATED_SPHERE_SLOT: usize = 28;
 pub(super) const CDEBUG_RENDERER_AABB_SLOT: usize = 31;
 pub(super) const CDEBUG_RENDERER_TRANSFORMED_AABB_SLOT: usize = 34;
 pub(super) const CDEBUG_RENDERER_QUEUED_TRANSFORMED_AABB_SLOT: usize = 35;
-pub(super) const CDEBUG_RENDERER_BOUNDS_SPHERE_SLOT: usize = 36;
-pub(super) const CDEBUG_RENDERER_BOUNDS_CYLINDER_SLOT: usize = 37;
-pub(super) const CDEBUG_RENDERER_BOUNDS_CAPSULE_SLOT: usize = 38;
-pub(super) const CDEBUG_RENDERER_BOUNDS_CONVEX_VERTICES_SLOT: usize = 39;
+// The game renders slot 36 as a solid cube and slot 38 as a solid 3D arrow.
+// Slots 37 and 39 are visually redundant with these and are intentionally not exposed.
+pub(super) const CDEBUG_RENDERER_SOLID_CUBE_SLOT: usize = 36;
+pub(super) const CDEBUG_RENDERER_SOLID_ARROW_SLOT: usize = 38;
 pub(super) const CDEBUG_RENDERER_LINE_METHOD_RVA: usize = 0x0297_A1B0;
 pub(super) const CDEBUG_RENDERER_ARROW_METHOD_RVA: usize = 0x0297_A420;
 pub(super) const CDEBUG_RENDERER_AXES_METHOD_RVA: usize = 0x0297_A940;
@@ -37,10 +37,8 @@ pub(super) const CDEBUG_RENDERER_TESSELLATED_SPHERE_METHOD_RVA: usize = 0x0297_A
 pub(super) const CDEBUG_RENDERER_AABB_METHOD_RVA: usize = 0x0297_AA80;
 pub(super) const CDEBUG_RENDERER_TRANSFORMED_AABB_METHOD_RVA: usize = 0x0297_AB30;
 pub(super) const CDEBUG_RENDERER_QUEUED_TRANSFORMED_AABB_METHOD_RVA: usize = 0x0297_AB70;
-pub(super) const CDEBUG_RENDERER_BOUNDS_SPHERE_METHOD_RVA: usize = 0x0297_ABA0;
-pub(super) const CDEBUG_RENDERER_BOUNDS_CYLINDER_METHOD_RVA: usize = 0x0297_ABE0;
-pub(super) const CDEBUG_RENDERER_BOUNDS_CAPSULE_METHOD_RVA: usize = 0x0297_AC20;
-pub(super) const CDEBUG_RENDERER_BOUNDS_CONVEX_VERTICES_METHOD_RVA: usize = 0x0297_AC60;
+pub(super) const CDEBUG_RENDERER_SOLID_CUBE_METHOD_RVA: usize = 0x0297_ABA0;
+pub(super) const CDEBUG_RENDERER_SOLID_ARROW_METHOD_RVA: usize = 0x0297_AC20;
 pub(super) const PRIMITIVE_RENDERER_LINE_RVA: usize = 0x028B_BA40;
 pub(super) const PRIMITIVE_RENDERER_ARROW_RVA: usize = 0x028B_DF60;
 pub(super) const PRIMITIVE_RENDERER_AXES_RVA: usize = 0x028B_79C0;

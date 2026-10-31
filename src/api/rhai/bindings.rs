@@ -361,7 +361,7 @@ pub(crate) fn register_v1(engine: &mut Engine) {
     ScriptMath::register(engine);
     register_context_properties(engine);
     register_basic_debug_draw(engine);
-    register_bounds_debug_draw(engine);
+    register_transformed_debug_draw(engine);
     register_value_helpers(engine);
     register_copied_object_properties(engine);
 }
@@ -427,63 +427,55 @@ fn register_basic_debug_draw(engine: &mut Engine) {
             },
         )
         .register_fn(
-            "sphere",
-            |d: &mut InvocationDebugDraw, c: Map, r: rhai::FLOAT, color: Map| d.sphere(c, r, color),
-        )
-        .register_fn(
-            "sparse_sphere",
+            "wire_sphere",
             |d: &mut InvocationDebugDraw, c: Map, r: rhai::FLOAT, color: Map| {
-                d.sparse_sphere(c, r, color)
+                d.wire_sphere(c, r, color)
             },
         )
         .register_fn(
-            "tessellated_sphere",
+            "xray_sphere",
             |d: &mut InvocationDebugDraw, c: Map, r: rhai::FLOAT, color: Map| {
-                d.tessellated_sphere(c, r, color)
+                d.xray_sphere(c, r, color)
             },
         )
         .register_fn(
-            "aabb",
-            |d: &mut InvocationDebugDraw, min: Map, max: Map, color: Map| d.aabb(min, max, color),
+            "surface_wire_sphere",
+            |d: &mut InvocationDebugDraw, c: Map, r: rhai::FLOAT, color: Map| {
+                d.surface_wire_sphere(c, r, color)
+            },
+        )
+        .register_fn(
+            "wire_aabb",
+            |d: &mut InvocationDebugDraw, min: Map, max: Map, color: Map| {
+                d.wire_aabb(min, max, color)
+            },
         );
 }
 
-fn register_bounds_debug_draw(engine: &mut Engine) {
+fn register_transformed_debug_draw(engine: &mut Engine) {
     engine
         .register_fn(
-            "transformed_aabb",
+            "wire_box",
             |d: &mut InvocationDebugDraw, transform: Array, min: Map, max: Map, color: Map| {
-                d.transformed_aabb(transform, min, max, color)
+                d.wire_box(transform, min, max, color)
             },
         )
         .register_fn(
-            "queued_transformed_aabb",
+            "xray_wire_box",
             |d: &mut InvocationDebugDraw, transform: Array, min: Map, max: Map, color: Map| {
-                d.queued_transformed_aabb(transform, min, max, color)
+                d.xray_wire_box(transform, min, max, color)
             },
         )
         .register_fn(
-            "bounds_sphere",
+            "solid_cube",
             |d: &mut InvocationDebugDraw, transform: Array, min: Map, max: Map, color: Map| {
-                d.bounds_shape(0, transform, min, max, color)
+                d.solid_shape(false, transform, min, max, color)
             },
         )
         .register_fn(
-            "bounds_cylinder",
+            "solid_arrow",
             |d: &mut InvocationDebugDraw, transform: Array, min: Map, max: Map, color: Map| {
-                d.bounds_shape(1, transform, min, max, color)
-            },
-        )
-        .register_fn(
-            "bounds_capsule",
-            |d: &mut InvocationDebugDraw, transform: Array, min: Map, max: Map, color: Map| {
-                d.bounds_shape(4, transform, min, max, color)
-            },
-        )
-        .register_fn(
-            "bounds_convex_vertices",
-            |d: &mut InvocationDebugDraw, transform: Array, min: Map, max: Map, color: Map| {
-                d.bounds_shape(5, transform, min, max, color)
+                d.solid_shape(true, transform, min, max, color)
             },
         );
 }

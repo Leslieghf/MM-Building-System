@@ -24,10 +24,8 @@ struct RendererMethods {
     aabb: CDebugRendererAabb,
     transformed_aabb: CDebugRendererTransformedAabb,
     queued_transformed_aabb: CDebugRendererTransformedAabb,
-    bounds_sphere: CDebugRendererBoundsShape,
-    bounds_cylinder: CDebugRendererBoundsShape,
-    bounds_capsule: CDebugRendererBoundsShape,
-    bounds_convex_vertices: CDebugRendererBoundsShape,
+    solid_cube: CDebugRendererBoundsShape,
+    solid_arrow: CDebugRendererBoundsShape,
 }
 
 pub(in crate::api::game::native) fn draw_script_debug_primitives(
@@ -89,7 +87,7 @@ fn read_facade(image_base: usize) -> Result<*mut c_void, &'static str> {
 
 fn validate_facade_vtable(image_base: usize, facade: *mut c_void) -> Result<usize, &'static str> {
     let vtable = unsafe { ptr::read_volatile(facade.cast::<usize>()) };
-    let required_bytes = (CDEBUG_RENDERER_BOUNDS_CONVEX_VERTICES_SLOT + 1) * size_of::<usize>();
+    let required_bytes = (CDEBUG_RENDERER_SOLID_ARROW_SLOT + 1) * size_of::<usize>();
     if vtable != image_base + CDEBUG_RENDERER_FACADE_VTABLE_RVA
         || !readable_span(vtable, required_bytes)
     {
@@ -105,7 +103,7 @@ fn read_backend_vtable(facade: *mut c_void) -> Result<usize, &'static str> {
         return Err("CDebugRenderer backend is unavailable");
     }
     let vtable = unsafe { ptr::read_volatile(backend.cast::<usize>()) };
-    let required_bytes = (CDEBUG_RENDERER_BOUNDS_CONVEX_VERTICES_SLOT + 1) * size_of::<usize>();
+    let required_bytes = (CDEBUG_RENDERER_SOLID_ARROW_SLOT + 1) * size_of::<usize>();
     if !readable_span(vtable, required_bytes) {
         return Err("CDebugRenderer backend vtable is unreadable");
     }
@@ -163,20 +161,12 @@ fn validate_facade_geometry(image_base: usize, vtable: usize) -> Result<(), &'st
             CDEBUG_RENDERER_QUEUED_TRANSFORMED_AABB_METHOD_RVA,
         ),
         (
-            CDEBUG_RENDERER_BOUNDS_SPHERE_SLOT,
-            CDEBUG_RENDERER_BOUNDS_SPHERE_METHOD_RVA,
+            CDEBUG_RENDERER_SOLID_CUBE_SLOT,
+            CDEBUG_RENDERER_SOLID_CUBE_METHOD_RVA,
         ),
         (
-            CDEBUG_RENDERER_BOUNDS_CYLINDER_SLOT,
-            CDEBUG_RENDERER_BOUNDS_CYLINDER_METHOD_RVA,
-        ),
-        (
-            CDEBUG_RENDERER_BOUNDS_CAPSULE_SLOT,
-            CDEBUG_RENDERER_BOUNDS_CAPSULE_METHOD_RVA,
-        ),
-        (
-            CDEBUG_RENDERER_BOUNDS_CONVEX_VERTICES_SLOT,
-            CDEBUG_RENDERER_BOUNDS_CONVEX_VERTICES_METHOD_RVA,
+            CDEBUG_RENDERER_SOLID_ARROW_SLOT,
+            CDEBUG_RENDERER_SOLID_ARROW_METHOD_RVA,
         ),
     ];
     for (slot, rva) in methods {
@@ -196,10 +186,8 @@ fn validate_backend_geometry(vtable: usize) -> Result<(), &'static str> {
         CDEBUG_RENDERER_AABB_SLOT,
         CDEBUG_RENDERER_TRANSFORMED_AABB_SLOT,
         CDEBUG_RENDERER_QUEUED_TRANSFORMED_AABB_SLOT,
-        CDEBUG_RENDERER_BOUNDS_SPHERE_SLOT,
-        CDEBUG_RENDERER_BOUNDS_CYLINDER_SLOT,
-        CDEBUG_RENDERER_BOUNDS_CAPSULE_SLOT,
-        CDEBUG_RENDERER_BOUNDS_CONVEX_VERTICES_SLOT,
+        CDEBUG_RENDERER_SOLID_CUBE_SLOT,
+        CDEBUG_RENDERER_SOLID_ARROW_SLOT,
     ];
     let executable = slots.into_iter().all(|slot| {
         let target = unsafe { ptr::read_volatile((vtable as *const usize).add(slot)) };
@@ -229,14 +217,8 @@ fn resolve_renderer_methods(image_base: usize) -> Result<RendererMethods, &'stat
             queued_transformed_aabb: std::mem::transmute(address(
                 CDEBUG_RENDERER_QUEUED_TRANSFORMED_AABB_METHOD_RVA,
             )),
-            bounds_sphere: std::mem::transmute(address(CDEBUG_RENDERER_BOUNDS_SPHERE_METHOD_RVA)),
-            bounds_cylinder: std::mem::transmute(address(
-                CDEBUG_RENDERER_BOUNDS_CYLINDER_METHOD_RVA,
-            )),
-            bounds_capsule: std::mem::transmute(address(CDEBUG_RENDERER_BOUNDS_CAPSULE_METHOD_RVA)),
-            bounds_convex_vertices: std::mem::transmute(address(
-                CDEBUG_RENDERER_BOUNDS_CONVEX_VERTICES_METHOD_RVA,
-            )),
+            solid_cube: std::mem::transmute(address(CDEBUG_RENDERER_SOLID_CUBE_METHOD_RVA)),
+            solid_arrow: std::mem::transmute(address(CDEBUG_RENDERER_SOLID_ARROW_METHOD_RVA)),
         }
     })
 }
@@ -274,16 +256,15 @@ fn identity_transform_at(position: [f32; 3]) -> [f32; 16] {
 
 fn submit_geometry(facade: *mut c_void, methods: RendererMethods, primitive: DebugPrimitive) {
     match primitive {
-        DebugPrimitive::Sphere { .. }
-        | DebugPrimitive::SparseSphere { .. }
-        | DebugPrimitive::TessellatedSphere { .. } => submit_sphere(facade, methods, primitive),
-        DebugPrimitive::Aabb { .. }
-        | DebugPrimitive::TransformedAabb { .. }
-        | DebugPrimitive::QueuedTransformedAabb { .. } => submit_box(facade, methods, primitive),
-        DebugPrimitive::BoundsSphere { .. }
-        | DebugPrimitive::BoundsCylinder { .. }
-        | DebugPrimitive::BoundsCapsule { .. }
-        | DebugPrimitive::BoundsConvexVertices { .. } => submit_bounds(facade, methods, primitive),
+        DebugPrimitive::WireSphere { .. }
+        | DebugPrimitive::XraySphere { .. }
+        | DebugPrimitive::SurfaceWireSphere { .. } => submit_sphere(facade, methods, primitive),
+        DebugPrimitive::WireAabb { .. }
+        | DebugPrimitive::WireBox { .. }
+        | DebugPrimitive::XrayWireBox { .. } => submit_box(facade, methods, primitive),
+        DebugPrimitive::SolidCube { .. } | DebugPrimitive::SolidArrow { .. } => {
+            submit_solid_shape(facade, methods, primitive)
+        }
         DebugPrimitive::Axes { .. }
         | DebugPrimitive::TransformedAxes { .. }
         | DebugPrimitive::Line { .. }
@@ -295,17 +276,17 @@ fn submit_geometry(facade: *mut c_void, methods: RendererMethods, primitive: Deb
 
 fn submit_sphere(facade: *mut c_void, methods: RendererMethods, primitive: DebugPrimitive) {
     match primitive {
-        DebugPrimitive::Sphere {
+        DebugPrimitive::WireSphere {
             center,
             radius,
             color,
         } => unsafe { (methods.sphere)(facade, &center, radius, &color) },
-        DebugPrimitive::SparseSphere {
+        DebugPrimitive::XraySphere {
             center,
             radius,
             color,
         } => unsafe { (methods.sparse_sphere)(facade, &center, radius, &color) },
-        DebugPrimitive::TessellatedSphere {
+        DebugPrimitive::SurfaceWireSphere {
             center,
             radius,
             color,
@@ -316,18 +297,18 @@ fn submit_sphere(facade: *mut c_void, methods: RendererMethods, primitive: Debug
 
 fn submit_box(facade: *mut c_void, methods: RendererMethods, primitive: DebugPrimitive) {
     match primitive {
-        DebugPrimitive::Aabb {
+        DebugPrimitive::WireAabb {
             minimum,
             maximum,
             color,
         } => unsafe { (methods.aabb)(facade, &minimum, &maximum, &color) },
-        DebugPrimitive::TransformedAabb {
+        DebugPrimitive::WireBox {
             transform,
             minimum,
             maximum,
             color,
         } => unsafe { (methods.transformed_aabb)(facade, &transform, &minimum, &maximum, &color) },
-        DebugPrimitive::QueuedTransformedAabb {
+        DebugPrimitive::XrayWireBox {
             transform,
             minimum,
             maximum,
@@ -339,34 +320,20 @@ fn submit_box(facade: *mut c_void, methods: RendererMethods, primitive: DebugPri
     }
 }
 
-fn submit_bounds(facade: *mut c_void, methods: RendererMethods, primitive: DebugPrimitive) {
+fn submit_solid_shape(facade: *mut c_void, methods: RendererMethods, primitive: DebugPrimitive) {
     match primitive {
-        DebugPrimitive::BoundsSphere {
+        DebugPrimitive::SolidCube {
             transform,
             minimum,
             maximum,
             color,
-        } => unsafe { (methods.bounds_sphere)(facade, &transform, &minimum, &maximum, &color) },
-        DebugPrimitive::BoundsCylinder {
+        } => unsafe { (methods.solid_cube)(facade, &transform, &minimum, &maximum, &color) },
+        DebugPrimitive::SolidArrow {
             transform,
             minimum,
             maximum,
             color,
-        } => unsafe { (methods.bounds_cylinder)(facade, &transform, &minimum, &maximum, &color) },
-        DebugPrimitive::BoundsCapsule {
-            transform,
-            minimum,
-            maximum,
-            color,
-        } => unsafe { (methods.bounds_capsule)(facade, &transform, &minimum, &maximum, &color) },
-        DebugPrimitive::BoundsConvexVertices {
-            transform,
-            minimum,
-            maximum,
-            color,
-        } => unsafe {
-            (methods.bounds_convex_vertices)(facade, &transform, &minimum, &maximum, &color)
-        },
-        _ => unreachable!("non-bounds primitive routed to bounds dispatch"),
+        } => unsafe { (methods.solid_arrow)(facade, &transform, &minimum, &maximum, &color) },
+        _ => unreachable!("non-solid shape routed to solid shape dispatch"),
     }
 }

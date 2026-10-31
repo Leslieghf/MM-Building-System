@@ -1,3 +1,13 @@
+## Current state — 2026-10-31 stable semantic gizmo set deployed
+
+Kept the distinct wire variants and the two solid forms the user requested. Rhai now exposes semantic names only; old native-name aliases and duplicate solid-shape routes 37/39 are removed from the live script/native dispatch path. The solid cube uses slot 36 and the solid 3D arrow uses slot 38. Research retains the complete 36–39 Havok type mapping. `debug_gizmo` was refreshed to show each retained visual without duplicate axis lines.
+
+- Mad Max was confirmed closed before replacement and was not launched afterward.
+- Installed `scripts\MadMaxModding.asi`, SHA-256 `D8B23512F01AD098C0F9E9A2DBC6546F475324027C4B7E07C9D487E87D319D38` (11,279,872 bytes). Previous ASI preserved as `scripts\MadMaxModding.asi.before-gizmo-api-prune-20261031`.
+- Installed `MadMaxModding\API.md`, SHA-256 `EE14780A5787A72093F37C62DFBB586FF645185B315096B2143E687D21D81325`; previous copy preserved as `MadMaxModding\API.md.before-gizmo-api-prune-20261031`.
+- Installed `MadMaxModding\scripts\debug_gizmo\main.rhai`, SHA-256 `F2F5CA1FBC1ADE701B24E37F9DB8660938A219B6ED7001A5BBDD5E3A9A4C229E`; previous copy preserved as `MadMaxModding\scripts\debug_gizmo\main.rhai.before-gizmo-api-prune-20261031`.
+- `cargo fmt --all`, `cargo check`, `cargo build --release --locked`, and `git diff --check` passed. No automated tests were run. In-game appearance after the API cleanup awaits user launch.
+
 ## Previous installed state — 2026-10-30 CDebugRenderer line/arrow probe
 - Installed `scripts\MadMaxModding.asi`, SHA-256 `70700B78F946C22374B70447C22BD06A0A3F07C43AAA4525EE3C856FF54F4F0E` (10,964,992 bytes). It adds a temporary `debug_renderer_test` console command that dispatches a cyan camera-ray tick and amber auto-width arrow through `CDebugRenderer` facade slots 1 and 9 for up to 240 `UpdatePostSim` callbacks.
 - Previous installed ASI preserved as `scripts\MadMaxModding.asi.before-cdebug-renderer-test-20261030`, SHA-256 `1F11555A3EDD4464C77046E45DACE19236D10E7B17B76482ADD7254C71B6497C`.

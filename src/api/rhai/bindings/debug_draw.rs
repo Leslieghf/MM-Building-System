@@ -31,57 +31,45 @@ pub(crate) enum DebugPrimitive {
         end: [f32; 3],
         color: [f32; 4],
     },
-    Sphere {
+    WireSphere {
         center: [f32; 3],
         radius: f32,
         color: [f32; 4],
     },
-    SparseSphere {
+    XraySphere {
         center: [f32; 3],
         radius: f32,
         color: [f32; 4],
     },
-    TessellatedSphere {
+    SurfaceWireSphere {
         center: [f32; 3],
         radius: f32,
         color: [f32; 4],
     },
-    Aabb {
+    WireAabb {
         minimum: [f32; 3],
         maximum: [f32; 3],
         color: [f32; 4],
     },
-    TransformedAabb {
+    WireBox {
         transform: [f32; 16],
         minimum: [f32; 3],
         maximum: [f32; 3],
         color: [f32; 4],
     },
-    QueuedTransformedAabb {
+    XrayWireBox {
         transform: [f32; 16],
         minimum: [f32; 3],
         maximum: [f32; 3],
         color: [f32; 4],
     },
-    BoundsSphere {
+    SolidCube {
         transform: [f32; 16],
         minimum: [f32; 3],
         maximum: [f32; 3],
         color: [f32; 4],
     },
-    BoundsCylinder {
-        transform: [f32; 16],
-        minimum: [f32; 3],
-        maximum: [f32; 3],
-        color: [f32; 4],
-    },
-    BoundsCapsule {
-        transform: [f32; 16],
-        minimum: [f32; 3],
-        maximum: [f32; 3],
-        color: [f32; 4],
-    },
-    BoundsConvexVertices {
+    SolidArrow {
         transform: [f32; 16],
         minimum: [f32; 3],
         maximum: [f32; 3],
@@ -95,15 +83,10 @@ impl DebugPrimitive {
             Self::Axes { .. } | Self::TransformedAxes { .. } => 3,
             Self::Line { .. } => 1,
             Self::Arrow { .. } => 8,
-            Self::Sphere { .. } | Self::SparseSphere { .. } => 9,
-            Self::TessellatedSphere { .. } => 60,
-            Self::Aabb { .. }
-            | Self::TransformedAabb { .. }
-            | Self::QueuedTransformedAabb { .. } => 12,
-            Self::BoundsSphere { .. }
-            | Self::BoundsCylinder { .. }
-            | Self::BoundsCapsule { .. }
-            | Self::BoundsConvexVertices { .. } => 1,
+            Self::WireSphere { .. } | Self::XraySphere { .. } => 9,
+            Self::SurfaceWireSphere { .. } => 60,
+            Self::WireAabb { .. } | Self::WireBox { .. } | Self::XrayWireBox { .. } => 12,
+            Self::SolidCube { .. } | Self::SolidArrow { .. } => 1,
         }
     }
 }
@@ -195,66 +178,66 @@ impl InvocationDebugDraw {
         })
     }
 
-    pub(super) fn sphere(
+    pub(super) fn wire_sphere(
         &self,
         center: Map,
         radius: rhai::FLOAT,
         color: Map,
     ) -> Result<(), Box<rhai::EvalAltResult>> {
-        self.push(DebugPrimitive::Sphere {
+        self.push(DebugPrimitive::WireSphere {
             center: parse_debug_vector(center)?,
             radius: parse_debug_radius(radius)?,
             color: parse_debug_color(color)?,
         })
     }
 
-    pub(super) fn sparse_sphere(
+    pub(super) fn xray_sphere(
         &self,
         center: Map,
         radius: rhai::FLOAT,
         color: Map,
     ) -> Result<(), Box<rhai::EvalAltResult>> {
-        self.push(DebugPrimitive::SparseSphere {
+        self.push(DebugPrimitive::XraySphere {
             center: parse_debug_vector(center)?,
             radius: parse_debug_radius(radius)?,
             color: parse_debug_color(color)?,
         })
     }
 
-    pub(super) fn tessellated_sphere(
+    pub(super) fn surface_wire_sphere(
         &self,
         center: Map,
         radius: rhai::FLOAT,
         color: Map,
     ) -> Result<(), Box<rhai::EvalAltResult>> {
-        self.push(DebugPrimitive::TessellatedSphere {
+        self.push(DebugPrimitive::SurfaceWireSphere {
             center: parse_debug_vector(center)?,
             radius: parse_debug_radius(radius)?,
             color: parse_debug_color(color)?,
         })
     }
 
-    pub(super) fn aabb(
+    pub(super) fn wire_aabb(
         &self,
         minimum: Map,
         maximum: Map,
         color: Map,
     ) -> Result<(), Box<rhai::EvalAltResult>> {
-        self.push(DebugPrimitive::Aabb {
+        self.push(DebugPrimitive::WireAabb {
             minimum: parse_debug_vector(minimum)?,
             maximum: parse_debug_vector(maximum)?,
             color: parse_debug_color(color)?,
         })
     }
 
-    pub(super) fn transformed_aabb(
+    pub(super) fn wire_box(
         &self,
         transform: Array,
         minimum: Map,
         maximum: Map,
         color: Map,
     ) -> Result<(), Box<rhai::EvalAltResult>> {
-        self.push(DebugPrimitive::TransformedAabb {
+        self.push(DebugPrimitive::WireBox {
             transform: parse_debug_transform(transform)?,
             minimum: parse_debug_vector(minimum)?,
             maximum: parse_debug_vector(maximum)?,
@@ -262,14 +245,14 @@ impl InvocationDebugDraw {
         })
     }
 
-    pub(super) fn queued_transformed_aabb(
+    pub(super) fn xray_wire_box(
         &self,
         transform: Array,
         minimum: Map,
         maximum: Map,
         color: Map,
     ) -> Result<(), Box<rhai::EvalAltResult>> {
-        self.push(DebugPrimitive::QueuedTransformedAabb {
+        self.push(DebugPrimitive::XrayWireBox {
             transform: parse_debug_transform(transform)?,
             minimum: parse_debug_vector(minimum)?,
             maximum: parse_debug_vector(maximum)?,
@@ -277,9 +260,9 @@ impl InvocationDebugDraw {
         })
     }
 
-    pub(super) fn bounds_shape(
+    pub(super) fn solid_shape(
         &self,
-        kind: u8,
+        is_arrow: bool,
         transform: Array,
         minimum: Map,
         maximum: Map,
@@ -289,31 +272,20 @@ impl InvocationDebugDraw {
         let minimum = parse_debug_vector(minimum)?;
         let maximum = parse_debug_vector(maximum)?;
         let color = parse_debug_color(color)?;
-        self.push(match kind {
-            0 => DebugPrimitive::BoundsSphere {
+        self.push(if is_arrow {
+            DebugPrimitive::SolidArrow {
                 transform,
                 minimum,
                 maximum,
                 color,
-            },
-            1 => DebugPrimitive::BoundsCylinder {
+            }
+        } else {
+            DebugPrimitive::SolidCube {
                 transform,
                 minimum,
                 maximum,
                 color,
-            },
-            4 => DebugPrimitive::BoundsCapsule {
-                transform,
-                minimum,
-                maximum,
-                color,
-            },
-            _ => DebugPrimitive::BoundsConvexVertices {
-                transform,
-                minimum,
-                maximum,
-                color,
-            },
+            }
         })
     }
 

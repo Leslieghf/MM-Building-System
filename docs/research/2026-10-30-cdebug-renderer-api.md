@@ -58,12 +58,20 @@ The `debug_gizmo` example calls every mapped draw path together, placing shapes 
 
 The renderer-side helper `ProcessPrimitiveRendererDebugShape` stores a shape type, 8-bit RGBA, and a copied 4x4 transform in an internal record while holding the renderer synchronization object. The exact consumer/render pass and practical capacity remain unverified.
 
+### Bounds-shape type IDs cross-check (2026-10-31)
+
+The four IDs passed by the bounds-shape builders are not arbitrary labels: they match Havok's `hkcdShapeType::ShapeTypeEnum` values exactly — `SPHERE = 0`, `CYLINDER = 1`, `CAPSULE = 4`, and `CONVEX_VERTICES = 5`. The same enum values and names appear in a public source mirror of Havok's `hkcdShape.h` ([source](https://codeviewer.zeldamods.org/uking/uking/lib/hkStubs/Havok/Geometry/Collide/Shapes/hkcdShape.h.html)). This external match corroborates the interpretation of the Mad Max builders' type IDs as requested Havok shape kinds. It does not prove that Mad Max uses the same Havok revision, nor does it identify the queue consumer.
+
+**API selection:** the user chose visible, stable names for distinct output and asked to drop duplicate variants. Rhai therefore retains slot 36 as `solid_cube` and slot 38 as `solid_arrow`; slots 37 and 39 are visually redundant and are omitted from runtime dispatch. These names describe observed visuals, while the type-ID mapping above records that the game requests Havok sphere/capsule shapes. Keep the mismatch explicit in API docs. The consumer/transform cause remains unresolved. Slot 39 accepts bounds rather than a vertex buffer, so none of these calls imply arbitrary user-supplied convex meshes.
+
 ## Character and vehicle transform basis investigation (2026-10-30)
 
 Ghidra's MSVC RTTI hierarchy descriptors confirm that both `CCharacter` and `CVehicle` have a `CGameObject` base subobject at byte offset `+8`:
 
 - `CCharacter` type descriptor `0x141797910`, hierarchy `0x1414B1020`; its `CGameObject` base descriptor reports PMD member displacement `8`. The `CGameObject` subobject vftable address point is `0x141251188`, with slot 22 targeting `0x141C58BB0`.
 - `CVehicle` type descriptor `0x1417B7928`, hierarchy `0x1414DA4C0`; its `CGameObject` base descriptor also reports PMD member displacement `8`. The subobject vftable address point is `0x1412D8868`, with slot 22 targeting `0x1421A15D0`.
+
+The pinned SDK declaration in `game/go/go.h` identifies the last `CGameObject` virtual as `bool GetTransform(CMatrix*)`. Counting the inherited `CRtti` destructor entry followed by the 22 declared `CGameObject` virtuals places `GetTransform` at zero-based vtable slot 22. This matches both RTTI-derived vtable targets above, so slot 22 is now mapped to `CGameObject::GetTransform` for these base subobjects. The observed `+8` adjustment is still required before dispatch. The two target addresses lie in `.xpdata`; their static Ghidra instruction streams are invalid, so the method name and dispatch slot are mapped but the native bodies and returned-transform behavior remain unverified.
 
 This confirms the `+8` adjustment used to reach the `CGameObject` subobject for both classes. The distinct slot-22 targets agree with class-specific overrides, but the supported executable's `.xpdata` bytes at those targets do not statically decompile into trustworthy bodies, so this does not by itself prove the virtual's runtime behavior or matrix convention.
 
