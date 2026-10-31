@@ -20,6 +20,14 @@ use std::time::Instant;
 ///
 /// The host adapter supplies each [`GameSnapshot`]. This type processes bounded
 /// requests and returns at most one game intent for native dispatch.
+///
+/// Call [`GameRuntime::prepare_and_run`] only at an accepted game callback
+/// boundary. It imports new copied data, applies queued lifecycle changes,
+/// runs [`MadMaxPostSim`], and returns a typed effect for the adapter. Spawn
+/// requests take priority over velocity requests when both are ready.
+///
+/// See [`create_endpoints`](crate::api::ecs::create_endpoints) for the paired UI transport and
+/// [`PendingGameIntent`] for the adapter handoff contract.
 pub struct GameRuntime {
     /// Bevy application containing game resources, schedules, and systems.
     pub app: App,
@@ -63,6 +71,9 @@ pub enum PendingGameIntent {
 
 impl GameRuntime {
     /// Create the host-driven game app from its paired channel endpoint.
+    ///
+    /// `endpoint` must come from [`create_endpoints`](crate::api::ecs::create_endpoints) and remain owned by this
+    /// runtime for the lifetime of its callbacks.
     pub fn new(endpoint: GameEndpoint) -> Self {
         let mut app = create_game_app();
         app.insert_resource(crate::api::scripts::manager::ScriptManager::new(
@@ -79,7 +90,14 @@ impl GameRuntime {
         }
     }
 
-    /// Route console load/reload commands here at a game callback boundary.
+    /// Route a script load or reload request through the background loader.
+    ///
+    /// The prepared package is activated at a later callback boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the worker queue is full, stopped, or the request is
+    /// stale or otherwise rejected by [`ScriptManager`](crate::api::scripts::manager::ScriptManager).
     pub fn request_script_load(
         &mut self,
         request: crate::api::scripts::loader::LoadScriptRequest,
@@ -90,9 +108,13 @@ impl GameRuntime {
             .request_load(&self.endpoint.script_loader, request)
     }
 
-    /// Import a callback snapshot, run scheduled work, and return one effect.
+    /// Import one callback snapshot, run scheduled work, and return one effect.
     ///
     /// `None` means no effect is ready for dispatch on this callback.
+    ///
+    /// The snapshot is copied into ECS before systems run. The returned intent
+    /// is not yet applied; pass it to the game adapter and report its outcome
+    /// through the runtime's typed outcome path.
     pub fn prepare_and_run(&mut self, mut snapshot: GameSnapshot) -> Option<PendingGameIntent> {
         self.capture_frame(&mut snapshot);
         self.import_pending_intents();

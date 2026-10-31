@@ -1,166 +1,109 @@
 //! Stable, UI-independent key names and IDs used by scripts and console commands.
+//!
+//! This is the shared vocabulary for [`InputFrame`](super::input::InputFrame),
+//! Rhai input helpers, and console bindings. It describes input observed by the
+//! mod-owned UI backend; it does not expose Mad Max's native input map.
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Stable identifiers for keys observed by the mod-owned UI input backend.
 ///
-/// IDs and lowercase names are independent of the game's keyboard API. The
-/// variants remain in a fixed order because their discriminants are shared
-/// with Rhai input helpers and console key bindings.
+/// The numeric ID and canonical lowercase name of each variant are part of the
+/// script/console contract. Do not reorder or renumber variants: IDs are shared
+/// with [`InputKey::id`] consumers and persisted key bindings.
+///
+/// IDs `0..=23` cover navigation, editing, modifiers, and the menu key;
+/// `24..=33` are digits; `34..=59` are letters; `60..=71` are F1–F12; and
+/// `72..=76` are the five mouse buttons. [`InputKey::ALL`] lists every variant
+/// in ID order.
+///
+/// # Examples
+///
+/// ```
+/// use madmax_bootstrap::api::ecs::input_key::InputKey;
+///
+/// let key = InputKey::parse("F5").expect("supported key");
+/// assert_eq!(key, InputKey::F5);
+/// assert_eq!(key.id(), 64);
+/// assert_eq!(key.name(), "f5");
+/// ```
 pub enum InputKey {
-    /// Tab key.
     Tab = 0,
-    /// Left Arrow key.
     LeftArrow = 1,
-    /// Right Arrow key.
     RightArrow = 2,
-    /// Up Arrow key.
     UpArrow = 3,
-    /// Down Arrow key.
     DownArrow = 4,
-    /// Page Up key.
     PageUp = 5,
-    /// Page Down key.
     PageDown = 6,
-    /// Home key.
     Home = 7,
-    /// End key.
     End = 8,
-    /// Insert key.
     Insert = 9,
-    /// Delete key.
     Delete = 10,
-    /// Backspace key.
     Backspace = 11,
-    /// Space key.
     Space = 12,
-    /// Enter key.
     Enter = 13,
-    /// Escape key.
     Escape = 14,
-    /// Left Ctrl key.
     LeftCtrl = 15,
-    /// Left Shift key.
     LeftShift = 16,
-    /// Left Alt key.
     LeftAlt = 17,
-    /// Right Ctrl key.
     RightCtrl = 18,
-    /// Right Shift key.
     RightShift = 19,
-    /// Right Alt key.
     RightAlt = 20,
-    /// Left Super key.
     LeftSuper = 21,
-    /// Right Super key.
     RightSuper = 22,
-    /// Menu key.
     Menu = 23,
-    /// Digit 0 key.
     Alpha0 = 24,
-    /// Digit 1 key.
     Alpha1 = 25,
-    /// Digit 2 key.
     Alpha2 = 26,
-    /// Digit 3 key.
     Alpha3 = 27,
-    /// Digit 4 key.
     Alpha4 = 28,
-    /// Digit 5 key.
     Alpha5 = 29,
-    /// Digit 6 key.
     Alpha6 = 30,
-    /// Digit 7 key.
     Alpha7 = 31,
-    /// Digit 8 key.
     Alpha8 = 32,
-    /// Digit 9 key.
     Alpha9 = 33,
-    /// A key.
     A = 34,
-    /// B key.
     B = 35,
-    /// C key.
     C = 36,
-    /// D key.
     D = 37,
-    /// E key.
     E = 38,
-    /// F key.
     F = 39,
-    /// G key.
     G = 40,
-    /// H key.
     H = 41,
-    /// I key.
     I = 42,
-    /// J key.
     J = 43,
-    /// K key.
     K = 44,
-    /// L key.
     L = 45,
-    /// M key.
     M = 46,
-    /// N key.
     N = 47,
-    /// O key.
     O = 48,
-    /// P key.
     P = 49,
-    /// Q key.
     Q = 50,
-    /// R key.
     R = 51,
-    /// S key.
     S = 52,
-    /// T key.
     T = 53,
-    /// U key.
     U = 54,
-    /// V key.
     V = 55,
-    /// W key.
     W = 56,
-    /// X key.
     X = 57,
-    /// Y key.
     Y = 58,
-    /// Z key.
     Z = 59,
-    /// Function key F1.
     F1 = 60,
-    /// Function key F2.
     F2 = 61,
-    /// Function key F3.
     F3 = 62,
-    /// Function key F4.
     F4 = 63,
-    /// Function key F5.
     F5 = 64,
-    /// Function key F6.
     F6 = 65,
-    /// Function key F7.
     F7 = 66,
-    /// Function key F8.
     F8 = 67,
-    /// Function key F9.
     F9 = 68,
-    /// Function key F10.
     F10 = 69,
-    /// Function key F11.
     F11 = 70,
-    /// Function key F12.
     F12 = 71,
-    /// left mouse button.
     MouseLeft = 72,
-    /// right mouse button.
     MouseRight = 73,
-    /// middle mouse button.
     MouseMiddle = 74,
-    /// extended 1 mouse button.
     MouseX1 = 75,
-    /// extended 2 mouse button.
     MouseX2 = 76,
 }
 
@@ -326,6 +269,17 @@ impl InputKey {
     ];
 
     /// Parse a supported name case-insensitively.
+    ///
+    /// Names are the canonical strings returned by [`InputKey::name`], except
+    /// for ASCII letter case. Numeric aliases such as `0` and `f5` are accepted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use madmax_bootstrap::api::ecs::InputKey;
+    /// assert_eq!(InputKey::parse("mouse1"), Some(InputKey::MouseLeft));
+    /// assert_eq!(InputKey::parse("unknown"), None);
+    /// ```
     pub fn parse(name: &str) -> Option<Self> {
         let name = name.to_ascii_lowercase();
         Self::NAMES
@@ -335,6 +289,8 @@ impl InputKey {
     }
 
     /// Resolve a stable numeric key ID.
+    ///
+    /// Returns `None` for values outside the assigned ID range.
     pub fn from_id(id: u32) -> Option<Self> {
         Self::ALL
             .get(id as usize)
@@ -343,6 +299,10 @@ impl InputKey {
     }
 
     /// Return the stable numeric ID shared by runtime input consumers.
+    ///
+    /// This value is persisted by console bindings and exposed to script input
+    /// helpers. Its assignment is fixed; use [`InputKey::from_id`] to validate
+    /// an ID received from storage or an external command.
     pub const fn id(self) -> u32 {
         self as u32
     }

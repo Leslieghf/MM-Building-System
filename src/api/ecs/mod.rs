@@ -1,5 +1,7 @@
-//! Owned Rust modding contracts: copied [`GameSnapshot`] frames, ordered
-//! [`MadMaxPostSim`] schedules, input snapshots, diagnostics, and bounded effects.
+//! Owned Rust modding contracts: copied
+//! [`copied frame snapshots`](crate::api::ecs::GameSnapshot), ordered
+//! [`post-simulation schedules`](crate::api::ecs::MadMaxPostSim), input snapshots,
+//! diagnostics, and bounded effects.
 //!
 //! Systems operate on copied values. Native reads and writes are performed by
 //! the host adapter after the schedule returns; see [`crate::api::game`] for

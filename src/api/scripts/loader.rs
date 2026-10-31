@@ -185,9 +185,12 @@ fn resolve_script_root(root: Option<PathBuf>) -> Result<PathBuf, String> {
     Ok(root)
 }
 
-/// The worker owns all filesystem access and compilation. Drop never joins it.
+/// Background owner of package discovery, file watching, and compilation.
 ///
-/// Request methods are non-blocking; full queues are reported to the caller.
+/// Filesystem operations and Rhai compilation run on the worker thread. Request
+/// methods are non-blocking and bounded; callers drain results at a game
+/// callback boundary. Dropping this handle disconnects the worker without
+/// joining it.
 pub struct ScriptLoader {
     requests: SyncSender<LoaderRequest>,
     results: Receiver<ScriptLoadResult>,
@@ -199,7 +202,9 @@ pub struct ScriptLoader {
     stopped: Arc<AtomicBool>,
 }
 
-/// Cloneable UI-facing handle for queuing discovery without submitting a console command.
+/// Cloneable UI handle for discovery requests without console command parsing.
+///
+/// Clones share the loader's bounded request queue and stop state.
 #[derive(Clone)]
 pub struct ScriptDiscoveryRequester {
     requests: SyncSender<LoaderRequest>,
@@ -224,13 +229,18 @@ impl ScriptDiscoveryRequester {
     }
 }
 impl ScriptLoader {
-    /// Start a worker using the supplied package root.
+    /// Start a worker using an explicit package root.
+    ///
+    /// The worker canonicalizes and validates the root before reading package
+    /// directories. Source compilation and discovery remain off the caller's
+    /// thread.
     pub fn start(root: PathBuf, engine_factory: RhaiEngineFactory) -> Self {
         Self::start_worker(Some(root), engine_factory)
     }
     /// Start the worker at `MadMaxModding/scripts` beside the executable.
     ///
-    /// The executable path is resolved on the worker thread.
+    /// The executable path is resolved on the worker thread. The script root is
+    /// `MadMaxModding/scripts` beside `MadMax.exe`.
     pub fn start_for_game(engine_factory: RhaiEngineFactory) -> Self {
         Self::start_worker(None, engine_factory)
     }
@@ -300,6 +310,14 @@ impl ScriptLoader {
         self.results.try_recv().ok()
     }
     /// Enable or disable file-change watching for one package.
+    ///
+    /// A watch observes bounded manifest/source content and debounces a stable
+    /// change before requesting compilation. It does not automatically replace
+    /// a package unless the manager still accepts that generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the worker stopped or its bounded request queue is full.
     pub fn set_auto_reload(&self, id: ScriptId, enabled: bool) -> Result<(), &'static str> {
         if self.stopped.load(Ordering::Acquire) {
             return Err("script loader unavailable");
@@ -311,8 +329,10 @@ impl ScriptLoader {
                 TrySendError::Disconnected(_) => "script loader unavailable",
             })
     }
-    /// Drain at most one request; cancelled notices are bounded by channel capacity.
-    /// Take one queued file-change reload request, if available.
+    /// Take the next active file-change reload request, if available.
+    ///
+    /// Cancelled notices are discarded while searching, up to the bounded
+    /// notice capacity. The method never waits for a future notice.
     pub fn try_auto_reload(&self) -> Option<LoadScriptRequest> {
         for _ in 0..LOADER_QUEUE_CAPACITY {
             let notice = self.auto_reload.try_recv().ok()?;
@@ -323,9 +343,10 @@ impl ScriptLoader {
         }
         None
     }
-    /// Coalesced saturation markers, bounded by the maximum loaded script count.
-    /// Each pending notice reports at most once, even if retries keep finding Full.
-    /// Take package IDs whose file-change notices overflowed the queue.
+    /// Take IDs whose file-change notifications overflowed the queue.
+    ///
+    /// Overflow is coalesced to at most one marker per active package. Taking
+    /// the markers clears them from this handle.
     pub fn take_auto_reload_overflow(&self) -> Vec<ScriptId> {
         let mut ids = BTreeSet::new();
         for _ in 0..super::manager::MAX_ACTIVE_SCRIPTS {
@@ -353,12 +374,15 @@ impl ScriptLoader {
     pub fn try_discovery_result(&self) -> Option<ScriptDiscoveryResult> {
         self.discovery_results.try_recv().ok()
     }
-    /// Retained overload state survives a full event/result queue for the next drain.
     /// Take and reset the number of compilation results dropped due to overflow.
+    ///
+    /// A nonzero count means one or more pending loads may need to be retried.
     pub fn take_overflow(&self) -> usize {
         self.overflow.swap(0, Ordering::Relaxed)
     }
     /// Take and reset the number of discovery results dropped due to overflow.
+    ///
+    /// A nonzero count means the UI should rescan to recover omitted rows.
     pub fn take_discovery_overflow(&self) -> usize {
         self.discovery_overflow.swap(0, Ordering::Relaxed)
     }

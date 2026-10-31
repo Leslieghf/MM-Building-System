@@ -1,4 +1,10 @@
 //! Bounded cross-callback channels and their typed endpoint bundles.
+//!
+//! [`create_endpoints`](crate::api::ecs::create_endpoints) builds the paired
+//! [`GameEndpoint`](crate::api::ecs::GameEndpoint) and
+//! [`UiEndpoint`](crate::api::ecs::UiEndpoint)
+//! used by the host. Producers never block: bounded queues reject submissions
+//! when full, and snapshots/effects carry owned values rather than game pointers.
 use super::{
     GameSnapshot, INTENT_QUEUE_CAPACITY, IntentOutcome, OUTCOME_QUEUE_CAPACITY,
     SNAPSHOT_QUEUE_CAPACITY, SPAWN_INTENT_QUEUE_CAPACITY,
@@ -29,7 +35,11 @@ pub struct SpawnIntentEnvelope {
     pub matrix: Matrix4x4,
 }
 
-/// Channel bundle consumed by game callback orchestration.
+/// Receivers and publishers owned by game-callback orchestration.
+///
+/// Construct the paired value with [`create_endpoints`]; its capacities follow
+/// the public queue-limit constants. The host drains requests and
+/// applies at most one effect per callback.
 pub struct GameEndpoint {
     /// Script console requests waiting for game-boundary processing.
     pub console_requests: Receiver<ConsoleRequest>,
@@ -53,7 +63,10 @@ pub struct GameEndpoint {
     pub input_mailbox: crate::api::ecs::input::InputFrameMailbox,
 }
 
-/// Channel bundle consumed by render/UI presentation.
+/// Receivers and publishers owned by render/UI presentation.
+///
+/// This endpoint contains no direct game access. Use the bounded publishers
+/// for requests and inspect returned events/outcomes to observe completion.
 pub struct UiEndpoint {
     /// Sender for bounded console commands.
     pub console_requests: ConsoleRequestSender,
@@ -76,6 +89,10 @@ pub struct UiEndpoint {
 }
 
 /// Create paired game and UI endpoints with the configured bounded channels.
+///
+/// The returned endpoints share input state and are intended to be split across
+/// the game and render callback owners. Dropping one side disconnects its
+/// channels; senders report those failures instead of blocking.
 pub fn create_endpoints() -> (GameEndpoint, UiEndpoint) {
     let (script_events_tx, script_events_rx) = crate::api::scripts::event_channel();
     let (console_request_tx, console_request_rx) = console::request_channel();

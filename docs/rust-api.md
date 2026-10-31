@@ -34,9 +34,16 @@ There is currently no public third-party registration or runtime loading mechani
 | `api::ecs` | Owned snapshots, ECS projection, schedules, diagnostics, and bounded intents. |
 | `api::scripts` | Script packages, lifecycle requests, console transport, and events. |
 | `api::rhai` | Versioned Rhai context registration and API catalog. |
-| `api::game` | Crate-private native integration boundary; not part of the supported modding API. |
+| `api::game` | Public low-level declarations for the supported build and the private host adapter; an implementation boundary, not the supported extension API. |
 
-The build metadata and raw ABI declarations are intentionally crate-private. Rust systems and scripts must use owned ECS data and typed intents instead of depending on reverse-engineered native layouts.
+The raw ABI declarations remain visible for research and first-party integration, but they are build-specific and carry no stability guarantee. Rust systems should use owned ECS data and typed intents; user-authored packages should use Rhai.
+
+## Rustdoc entry points
+
+- [`api::ecs`](../src/api/ecs/mod.rs) documents copied frame data, schedules, input, and typed effects.
+- [`api::scripts`](../src/api/scripts/mod.rs) documents package identity, events, and lifecycle boundaries.
+- [`InputKey`](../src/api/ecs/input_key.rs) documents the stable key-name and numeric-ID contract.
+- [Rhai API v1](rhai-api.md) is generated from the same catalog used to register script-visible functions.
 
 ## Safety
 

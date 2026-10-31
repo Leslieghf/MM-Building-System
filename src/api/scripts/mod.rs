@@ -26,6 +26,10 @@ pub const MAX_EVENT_BYTES: usize = 1024;
 pub const MAX_LOGS_PER_INVOCATION: usize = 8;
 
 /// Validated package identifier used by script requests and status events.
+///
+/// IDs are case-sensitive lowercase ASCII and safe to use as one directory
+/// component. They are not paths; package discovery also verifies that the
+/// manifest ID matches its containing directory.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ScriptId(String);
 impl ScriptId {
@@ -35,6 +39,16 @@ impl ScriptId {
     ///
     /// Returns a message when the identifier is empty, longer than 64 bytes,
     /// contains unsupported characters, or uses a reserved Windows device name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use madmax_bootstrap::api::scripts::ScriptId;
+    ///
+    /// let id = ScriptId::parse("vehicle_watch").expect("valid ID");
+    /// assert_eq!(id.as_str(), "vehicle_watch");
+    /// assert!(ScriptId::parse("Vehicle Watch").is_err());
+    /// ```
     pub fn parse(value: impl Into<String>) -> Result<Self, &'static str> {
         let value = value.into();
         if value.is_empty()
@@ -58,7 +72,11 @@ impl ScriptId {
         &self.0
     }
 }
-/// Monotonic generation number assigned when a package becomes active.
+/// Monotonic, host-local generation number assigned when a package activates.
+///
+/// Reloading a package creates a new generation and resets that package's
+/// persistent Rhai `state` map. Generation zero in [`ScriptEvent`] denotes a
+/// request or failure that has no active generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScriptGeneration(pub u64);
 /// Callback phase represented in script events and API descriptors.

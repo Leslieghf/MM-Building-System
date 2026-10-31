@@ -7,7 +7,20 @@ use std::sync::{Arc, Mutex};
 const INPUT_WORDS: usize = 16;
 
 /// Mod-owned input state sampled by Hudhook/ImGui and copied into the game ECS
-/// at callback boundaries. `just_*` transitions accumulate until consumed.
+/// at callback boundaries. It does not poll Mad Max's input system or controller
+/// state. `just_*` transitions accumulate until consumed or cleared.
+///
+/// Key arguments are stable IDs from
+/// [`InputKey`](crate::api::ecs::input_key::InputKey).
+/// Unsupported IDs read
+/// as released and are ignored by [`InputFrame::set_down`].
+///
+/// # Edge lifetime
+///
+/// [`InputFrameMailbox::publish`] merges transitions from sampled UI frames;
+/// [`InputFrameMailbox::take`] returns the accumulated state and clears those
+/// transitions. Call [`InputFrame::clear_edges`] when advancing a frame without
+/// consuming a mailbox sample.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct InputFrame {
     down: [u64; INPUT_WORDS],
@@ -17,14 +30,20 @@ pub struct InputFrame {
 
 impl InputFrame {
     /// Whether a supported key is held in this frame.
+    ///
+    /// `key` is the stable numeric ID from [`InputKey::id`](crate::api::ecs::input_key::InputKey::id).
     pub fn is_down(self, key: u32) -> bool {
         bit(self.down, key)
     }
     /// Whether the key changed from released to pressed since the last consume.
+    ///
+    /// Repeated presses before consumption remain one `true` edge.
     pub fn just_pressed(self, key: u32) -> bool {
         bit(self.just_pressed, key)
     }
     /// Whether the key changed from pressed to released since the last consume.
+    ///
+    /// Repeated releases before consumption remain one `true` edge.
     pub fn just_released(self, key: u32) -> bool {
         bit(self.just_released, key)
     }
@@ -35,7 +54,10 @@ impl InputFrame {
         self.just_released = [0; INPUT_WORDS];
     }
 
-    /// Apply one key state; unsupported key IDs are ignored.
+    /// Apply one key state and record any transition.
+    ///
+    /// Unsupported key IDs are ignored. A transition stays set until
+    /// [`InputFrame::clear_edges`] or a mailbox [`InputFrameMailbox::take`].
     pub fn set_down(&mut self, key: u32, is_down: bool) {
         if key as usize >= INPUT_WORDS * 64 {
             return;
@@ -50,7 +72,10 @@ impl InputFrame {
         }
     }
 
-    /// Replace held keys and accumulate transitions from a sampled frame.
+    /// Replace held keys and merge transitions from a sampled UI frame.
+    ///
+    /// Repeated samples before consumption preserve all observed press/release
+    /// edges while the held state comes from the newest sample.
     pub fn accumulate_sample(&mut self, sample: Self) {
         self.down = sample.down;
         for i in 0..INPUT_WORDS {
@@ -77,8 +102,11 @@ fn set_bit(bits: &mut [u64; INPUT_WORDS], key: u32, value: bool) {
     }
 }
 
-/// Shared latest-sample mailbox; both sides use `try_lock`, so neither the
-/// render callback nor Mad Max callback waits for the other runtime.
+/// Shared mailbox between the render/UI producer and game callback consumer.
+///
+/// The mailbox retains the latest held-key state and merges transition edges
+/// until taken. Both operations are non-blocking: lock contention drops that
+/// operation and is reported as `false` or `None`.
 #[derive(Clone, Default)]
 pub struct InputFrameMailbox(Arc<Mutex<InputFrame>>);
 impl InputFrameMailbox {

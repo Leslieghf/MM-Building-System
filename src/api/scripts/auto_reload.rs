@@ -1,9 +1,18 @@
-//! Content fingerprints and debounce policy for opt-in script file watching.
+//! Debounced content observation for opt-in script file watching.
+//!
+//! The loader watches only a package's manifest and main source file. A change
+//! is reported after the same content fingerprint appears in consecutive
+//! polls; the accepted bytes travel with the notice so a later save cannot
+//! silently change which version is compiled. This is change detection, not a
+//! security or authenticity mechanism.
 use super::ScriptId;
 use std::collections::BTreeMap;
 
-/// Content identity for the two files that make up a script package.
-/// `None` records a missing or unreadable file; `Some` hashes its complete contents.
+/// Content fingerprint for a package's manifest and main source.
+///
+/// `None` distinguishes a missing or unreadable file from an empty file;
+/// `Some` represents the complete file contents. This non-cryptographic value
+/// is used only to detect repeated observations, never to validate trust.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageFingerprint {
     manifest: Option<u64>,
@@ -11,6 +20,10 @@ pub struct PackageFingerprint {
 }
 
 impl PackageFingerprint {
+    /// Fingerprint the optional complete contents of both package files.
+    ///
+    /// Each input should be bounded by the package loader's size limits before
+    /// hashing. The result is stable for identical byte sequences in this build.
     pub fn from_contents(manifest: Option<&[u8]>, main: Option<&[u8]>) -> Self {
         Self {
             manifest: manifest.map(content_hash),
@@ -23,9 +36,11 @@ impl PackageFingerprint {
     }
 }
 
-/// Bounded file contents that produced a debounced fingerprint. Keeping these
-/// bytes with the notice prevents a later editor save from changing what the
-/// accepted notification compiles.
+/// Snapshot of bounded file contents accepted by the debounce policy.
+///
+/// The fields are private because snapshots are created by the loader. The
+/// contents stay paired with their fingerprint so subsequent edits cannot
+/// change the source associated with an already accepted notice.
 #[derive(Debug, Clone)]
 pub struct AutoReloadSnapshot {
     pub(crate) fingerprint: PackageFingerprint,
@@ -54,6 +69,10 @@ fn content_hash(contents: &[u8]) -> u64 {
     hash
 }
 
+/// Per-package debounce state for tests and loader-side change tracking.
+///
+/// Tracking starts from a clean baseline each time it is enabled. Disabled IDs
+/// are ignored until enabled again.
 #[derive(Default)]
 pub struct AutoReloadTracker {
     watches: BTreeMap<ScriptId, WatchState>,
@@ -66,7 +85,10 @@ struct WatchState {
 }
 
 impl AutoReloadTracker {
-    /// Enable or disable tracking. Every enable starts with a clean debounce baseline.
+    /// Enable or disable tracking for one package.
+    ///
+    /// Enabling resets the baseline; disabling removes all remembered
+    /// fingerprints for the ID.
     pub fn set_enabled(&mut self, id: ScriptId, enabled: bool) {
         if enabled {
             self.watches.insert(id, WatchState::default());
@@ -75,7 +97,11 @@ impl AutoReloadTracker {
         }
     }
 
-    /// Observe a poll. Returns true once after the same new fingerprint appears twice.
+    /// Observe one poll and report a stable, previously unseen change once.
+    ///
+    /// The first observation establishes a baseline. A later identical
+    /// observation emits `true`; subsequent identical polls return `false`
+    /// until the fingerprint changes.
     pub fn observe(&mut self, id: &ScriptId, fingerprint: PackageFingerprint) -> bool {
         let Some(state) = self.watches.get_mut(id) else {
             return false;

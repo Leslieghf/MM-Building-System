@@ -91,6 +91,12 @@ struct PendingLoad {
 }
 #[derive(Resource)]
 /// Owns active script generations and applies package changes at callback boundaries.
+///
+/// Use the `stage_*` methods when the caller already owns a validated package
+/// or wants to enqueue a lifecycle action directly. Use the `request_*`
+/// methods to compile from the configured package directory on the loader
+/// worker. In both cases, changes become visible only when
+/// [`apply_pending_changes`](ScriptManager::apply_pending_changes) runs.
 pub struct ScriptManager {
     engine: Engine,
     active: BTreeMap<ScriptId, ActiveScript>,
@@ -149,10 +155,22 @@ impl ScriptManager {
             .map_err(str::to_owned)
     }
     /// Queue package unload without an external request identifier.
+    ///
+    /// The unload takes effect at the next change boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bounded lifecycle queue is full.
     pub fn stage_unload(&mut self, id: ScriptId) -> Result<(), &'static str> {
         self.stage_unload_request(id, None)
     }
     /// Queue package unload and correlate its status event with a request.
+    ///
+    /// Any outstanding load for this ID is cancelled when the unload is staged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bounded lifecycle queue is full.
     pub fn stage_unload_request(
         &mut self,
         id: ScriptId,
@@ -166,10 +184,20 @@ impl ScriptManager {
         Ok(())
     }
     /// Queue one manual `on_run` invocation.
+    ///
+    /// The callback executes during the next applicable script phase.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bounded lifecycle queue is full.
     pub fn stage_run(&mut self, id: ScriptId) -> Result<(), &'static str> {
         self.stage_run_request(id, None)
     }
     /// Queue one manual `on_run` invocation with request correlation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bounded lifecycle queue is full.
     pub fn stage_run_request(
         &mut self,
         id: ScriptId,
@@ -178,6 +206,14 @@ impl ScriptManager {
         self.stage(PendingChange::Run(id, request_id))
     }
     /// Enable or disable file-change reload for an active package.
+    ///
+    /// Disabling reload cancels retained automatic work. It does not unload the
+    /// active generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package is not active or the worker cannot
+    /// update its watch request.
     pub fn set_auto_reload(
         &mut self,
         id: &ScriptId,
@@ -187,6 +223,11 @@ impl ScriptManager {
         self.set_auto_reload_request(id, enabled, loader, None)
     }
     /// Set file-change reload and correlate any status event with a request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package is not active or the worker request is
+    /// rejected. The previous setting remains active on rejection.
     pub fn set_auto_reload_request(
         &mut self,
         id: &ScriptId,
@@ -228,6 +269,12 @@ impl ScriptManager {
         Ok(())
     }
     /// Disable file watching and queue unload through the worker-backed loader.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the lifecycle queue or loader request queue is full,
+    /// or when the loader has stopped. A rejected unload leaves the active watch
+    /// enabled.
     pub fn request_unload(
         &mut self,
         loader: &super::loader::ScriptLoader,
@@ -255,8 +302,16 @@ impl ScriptManager {
             self.report_current_request(id.clone(), Some(cancelled.request_id), text);
         }
     }
-    /// Manual intent wins over automatic work, including prepared generations.
     /// Submit a package load or replacement to the worker-backed loader.
+    ///
+    /// A manual request supersedes older automatic reload work for the same ID.
+    /// Compilation happens on the worker; activation is deferred to a callback
+    /// boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-increasing request ID, duplicate active load,
+    /// pending-load limit, or rejected loader request.
     pub fn request_load(
         &mut self,
         loader: &super::loader::ScriptLoader,
@@ -265,6 +320,13 @@ impl ScriptManager {
         self.request_load_with_origin(loader, request, LoadOrigin::Manual)
     }
     /// Submit a file-change replacement while retaining generation ordering.
+    ///
+    /// Stale notices and notices for unloaded or non-watched packages are
+    /// ignored. If another load is in flight, the newest notice is retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if worker capacity is unavailable.
     pub fn request_auto_reload(
         &mut self,
         loader: &super::loader::ScriptLoader,

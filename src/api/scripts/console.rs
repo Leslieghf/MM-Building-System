@@ -1,4 +1,26 @@
-//! Bounded console grammar, transport, and UI-side output retention.
+//! Bounded command grammar, cross-thread transport, and transcript retention.
+//!
+//! [`ConsoleCommand::parse`](crate::api::scripts::console::ConsoleCommand::parse)
+//! turns text into a typed request; it does not run a command.
+//! the [`bounded request channel`](crate::api::scripts::console::request_channel) transfers
+//! requests to game callback processing, while the
+//! [`bounded event channel`](crate::api::scripts::console::event_channel) carries
+//! bounded results back to presentation.
+//!
+//! # Text commands
+//!
+//! ```text
+//! help [topic]                 show command help
+//! show_keys | show_binds       inspect input names and bindings
+//! bind <key> "<command>"      bind a key to a console command
+//! unbind <key>                 remove a binding
+//! script list                  discover packages without compiling them
+//! script <load|reload|run|unload|status> <id>
+//! ```
+//!
+//! `F1`, `F2`, and `F3` are reserved controls. `script auto_reload` is a typed
+//! UI request and intentionally has no text-command spelling. Queue capacities
+//! and per-callback drain budgets are exposed below.
 mod command;
 mod event;
 mod output;
