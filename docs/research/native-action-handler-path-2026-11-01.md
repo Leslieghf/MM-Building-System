@@ -41,11 +41,26 @@ Two additional action registrations in the same initializer use hard-coded hashe
 
 `RefreshActionHandlerSubscriptions` first removes the handler's old subscriptions. It then walks its recorded key/slot IDs, finds the corresponding registry records, adds the handler as a subscriber, and appends the active slot indices. `RemoveActionHandlerSubscriptions` performs the reverse operation. `AddActionSubscriber` stores handler pointers in a per-slot subscriber list; the implementation includes a capacity-growth path. Some subscription functions end at unreadable/bad instruction data in this snapshot, so the entire dispatch/cleanup contract is not recovered.
 
+## Delivery and named-action publishers
+
+The saved snapshot contains a partially decoded delivery path:
+
+1. `DispatchNamedActionEvent` accepts a name-like input, passes it through `HashActionNameTokens`, builds a key list, and calls `QueueOrDispatchActionEvent` with a default payload descriptor.
+2. `HashActionNameTokens` processes the input a character at a time through a case-conversion function pointer, splits on spaces, and hashes each non-empty token through a helper at `0x142FBD220`. The exact hash algorithm and any normalization beyond the visible character conversion are unknown.
+3. `BuildActionKeyList` stores a count and an array of 8-byte key pairs. `FindActionRegistryEntryByKey` reconstructs each pair as a packed 64-bit key (`upper32 << 32 | lower32`) and resolves it through the registry buckets.
+4. `DispatchActionPayload` looks up each key and calls `InvokeActionSubscribers` for the matching slot. `InvokeActionSubscribers` guards against recursive entry with a byte flag, then invokes each live subscriber through the function pointer at subscriber-object vtable offset `+0x8`. The subscriber callback signature, payload contract, and re-entrancy cleanup behavior are not fully recovered.
+5. `QueueOrDispatchActionEvent` checks a mode byte at registry/global offset `+0x51`. When set, it immediately copies the visible payload fields and calls `DispatchActionPayload`. When clear, it atomically increments a counter at `+0x1C` and starts writing into a ring buffer whose pointer and capacity are at `+0x10` and `+0x20`. The snapshot hits bad instruction data after the first visible ring-buffer write, so the queued-record layout and consumer/drain path remain unknown.
+
+Two additional publisher shapes are visible. `PublishNamedActionWithTransform` creates a 64-byte payload block and passes it with raw descriptor `0xFFFFFFFF04`; `QueueNamedActionWithU32Data` copies a four-byte value and uses raw descriptor `0xFFFFFFFF05`. These are evidence of native payload variants, not proof that the payloads are literally a transform and a `u32` at the ABI boundary. `DispatchNamedActionEvent` uses raw descriptor `0xFFFFFFFFFF`. The lower descriptor values are still opaque.
+
+This materially narrows the investigation: the action system is not only a registry. The decoded path includes named-key normalization, multi-key resolution, subscriber callbacks, and an immediate-versus-queued branch. However, no safe mod-facing dispatch API follows from these native wrappers yet. The queue's consumer, subscriber object ABI/lifetime, and physical-input-to-action binding path still need separate mapping.
+
 ## What this establishes
 
 - Mad Max has a native hashed action registration path that is distinct from raw key polling.
 - A complex native system (`InitializeSpecialCameras`) registers multiple named actions and refreshes/removes subscriptions through reusable helpers.
 - The engine maintains action-slot records and per-slot subscriber lists; handlers can refresh and remove their subscriptions.
-- This gives a focused next reverse-engineering path for input routing: resolve the hash/key descriptor, trace a known action from registry through its subscriber to the event delivery callback, and identify how bindings map physical controls into action IDs.
+- The decoded sender path can dispatch by a name-like key into matching subscribers, either immediately or through a partially observed queue path.
+- This gives a focused next reverse-engineering path for input routing: resolve the hash/key descriptor, find the queue consumer, identify the subscriber object's callback type, and trace how physical controls map into action IDs.
 
 It does **not** establish that mods can add actions, that actions are exposed in Mad Max's keybind menu, or that a registered action can suppress native gameplay input. Those require tracing the physical binding lookup and dispatch/consumption phase. No function in this map is safe to call from Rust yet.
