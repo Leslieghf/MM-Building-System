@@ -32,6 +32,8 @@ For next steps, trace the resource/entity creator path for `CRigidObject` and on
 
 The saved decoded-code snapshot provides a concrete layout cross-check for the event-handler hierarchy entry: `InitializeCRigidObjectInstance` calls a helper at byte offset `+0xD8` that writes vptr `0x141347040`. The vptr's COL resolves through TypeDescriptor `0x141792908` to `.?AVCEventHandler@NEvent@@`. The enclosing initializer then installs its `CRigidObject` vptr at that same offset; that vtable's COL identifies complete-object offset `0xD8`. This confirms base initialization followed by the concrete object's vtable at that subobject location, but it does not map event dispatch or registration semantics.
 
+The helper has 64 direct callers in the Ghidra saved snapshot, though the caller list is partly truncated and the callers remain unnamed. This supports prioritizing the shared event-handler base as a common construction seam; it is not a count of events or registrations.
+
 The static `NEvent::CEventHandler` vftable at `0x141347040` has two observed pointer-sized entries, `0x1429918A0` and `0x143039550`, both inside non-executable `.xpdata`. The first is a one-byte bad-data stub; the second is not defined as a function. These protected targets are leads only; their slot meanings, callable bodies, and event contracts remain unknown.
 
 ## Construction evidence from the saved runtime slice
