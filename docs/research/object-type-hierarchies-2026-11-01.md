@@ -36,6 +36,8 @@ The helper has 64 direct callers in the Ghidra saved snapshot, though the caller
 
 The static `NEvent::CEventHandler` vftable at `0x141347040` has two observed pointer-sized entries, `0x1429918A0` and `0x143039550`, both inside non-executable `.xpdata`. The first is a one-byte bad-data stub; the second is not defined as a function. These protected targets are leads only; their slot meanings, callable bodies, and event contracts remain unknown.
 
+The separately mapped native action-handler registration path is documented in [native-action-handler-path-2026-11-01.md](native-action-handler-path-2026-11-01.md). Special-camera initialization uses both the `NEvent::CEventHandler` subobject and action subscriptions; do not collapse them into one event model without tracing the dispatch edge.
+
 ## Construction evidence from the saved runtime slice
 
 Static RTTI declares `CAnimatedRigidObject` as a `CRigidObject` subclass. The saved decoded-code snapshot confirms the construction sequence: its creator entry calls an initializer that first invokes `InitializeCRigidObjectInstance`, then installs the animated class's five vtable address points at subobject offsets `0`, `8`, `0xD8`, `0xE8`, and `0xF0`, and initializes additional fields. The concrete initializer reaches at least offset `0x414`; the associated creator's third slot returns `0x4A0`.
