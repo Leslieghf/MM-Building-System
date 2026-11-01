@@ -1,3 +1,57 @@
+## Current state — lower-overhead ray/UI path with profiler — 2026-11-01
+
+- Normal builds leave invasive reverse-engineering ray hooks disabled; opt in with Cargo feature `research-taps` only for capture sessions. The script raycast adapter still invokes the mapped world-query helper directly.
+- Cached validated ray-query function/vtable addresses after their first successful resolution, while re-reading the live query-base pointer on every request.
+- The common single-ray callback path skips allocating a frame-local deduplication map. Multi-request batches still share exact duplicate rays within that accepted game callback.
+- The GMod-style spawn browser raycasts on catalog selection. `reticle_ray` and `spawn_placement_lab` start disabled and require explicit activation for continuous inspection.
+- Spawn browser folders now use prebuilt labels and ImGui clipping; tile IDs and shortened labels avoid temporary strings. Script-panel presentation no longer deep-clones publications or clones the open-state map every frame.
+- Enabled ThinLTO for optimized release builds. This applies to Rust code only and cannot optimize the game's native world-query/Havok implementation.
+- Added opt-in frame timing rows under the Runtime section for overlay sync/presentation, input/binds, HUD, script panels, dev tools, spawn browser, total overlay CPU, mod game-callback CPU, and latest native world-query CPU. Values are prior-frame or latest-operation CPU timings, not GPU presentation timings.
+- Resolved Bevy features are only `bevy_app/std` and `bevy_ecs/std`; the project does not enable Bevy renderer, 2D/3D, UI, audio, or physics subsystems.
+- `cargo fmt --all -- --check`, targeted `git diff --check`, and `cargo build --release --locked --target x86_64-pc-windows-msvc` succeeded. The ThinLTO build completed in 2m 47s initially and 49s after the profiler addition. Existing 12 unused research-hook warnings remain. No automated tests were run.
+- Mad Max was confirmed closed before installation. Installed ASI SHA-256: `75BEDEFC94874C4779E6816BD808A2E7C4F4A509C55752FC847610D2AC915014` (7,437,824 bytes). Previous ASI backup: `MadMaxModding\\backups\\ui-profiler-20261101-025337\\MadMaxModding.asi`, SHA-256 `BF97A688F083B56A7A8C38155838E0E259822E7EF934E39684CD44D2057788B2`.
+- In-game comparison remains pending. Compare cursor/UI smoothness with the spawn menu open, then run one explicitly enabled continuous ray workbench in the same scene. If a single ray per frame remains costly, the remaining time is in the synchronous game-native query path; ThinLTO cannot reduce that cost.
+
+## Current state — continuous shared ray workbenches; no floating spawn panel — 2026-11-01
+
+- Ray Workbench and the spawn placement tool now submit camera queries continuously while enabled; identical ray requests in one accepted game frame share the native query and fan out per-script results. The spawn menu continues to use the latest completed hit to submit its catalog selection. The user confirmed the prior one-shot spawn-menu path already spawned the stockpile, so this change is not presented as the cause or fix for the separate catalog spawn regression.
+- The `debug_spawn_menu / spawn_workbench` publication remains available to the spawn menu's Tools pane and event validation, but is excluded from generic floating script-panel rendering in every UI mode.
+- `cargo fmt --all`, `cargo check --locked`, `cargo build --release --locked --target x86_64-pc-windows-msvc`, and `git diff --check` succeeded. Existing unused world-query tap warnings remain. No tests were run.
+- Mad Max was confirmed closed for installation. Installed `scripts\MadMaxModding.asi`, SHA-256 `50EF1ACB5F767F5153F1EE7CAEA8AC9BCA188DF71FD446D923EADB6E846F5FFA` (12,011,520 bytes). The previous ASI and script/API files are backed up in `MadMaxModding\backups\continuous-ray-workbench-20261101-014157`.
+- Installed API and script hashes match the generated/reference files: `API.md` `5356C47F3A50BD4434B8C8411DC745F9097DD310F1F12612945B30AC987382E7`; `debug_spawn_menu/main.rhai` `2EC1DAC44319C787E751015DBF613D668760C447CE4F6B9F88B2E8D5E11698FB`; `reticle_ray/main.rhai` `25605CC40D7962347BAB600806848FA6379495D3ACFE5DE278232762319BFC8D`.
+
+## Current state — spawn request path restored; console source headers simplified — 2026-11-01
+
+- Restored the prior request-derived nonzero spawn ID path. The unverified `SpawnSystemGetNewSpawnId` ABI check had become a hard gate before the spawn call, so a pointer-return mismatch silently prevented every prop/vehicle request from reaching `SpawnSystemSpawn`. The request-derived ID is still retained for spawn observation and owned-spawn removal tracking.
+- Restored the 4-byte `i32` priority write at offset `0x4C`; the recent 1-byte write did not match the SDK enum width and could leave the native structure field malformed.
+- Console section headers now read `Cmd: <command>`, `Rhai: <script> @ <schedule>`, and `Rust: <module>`. Rust-generated effect outcomes and transport/runtime diagnostics retain their producer-module name in the section header.
+- `cargo fmt --all -- --check`, `cargo check --locked`, `cargo build --release --locked --target x86_64-pc-windows-msvc`, and `git diff --check` succeeded. Existing unused world-query tap warnings remain. No tests were run.
+- Mad Max was confirmed closed during installation. Installed `scripts\MadMaxModding.asi`, SHA-256 `4EF2C5E7EFD8F79E0E4E1ECB23467B3D48195EDFE21FDE79297114E7141050BB` (12,011,520 bytes). Previous ASI preserved as `scripts\MadMaxModding.asi.before-spawn-regression-fix-20261101`, SHA-256 `CFFC8DCD33E569668ECECE65D0DDF233EC3E864ED5DA2C39B261408144E3E42D`.
+
+## Current state — 2026-11-01 unified experimental catalog label installed
+
+- Removed the special `TEST ONLY` tile status. Roadkill Lootbox and all other unverified path-backed entries now share the yellow `EXPERIMENTAL` label; its catalog route and spawn behavior are unchanged.
+- Regenerated the 466-entry browser and spawn allowlist: one stable entry, 465 experimental entries, and no entries without a spawn path.
+- `cargo fmt -- --check`, `cargo check`, `cargo build --release`, and `git diff --check` succeeded. Existing unused world-query tap warnings remain.
+- Mad Max was not running during installation. Installed `scripts\MadMaxModding.asi`, SHA-256 `A406391FB436BC59C0B694F46E5AB68FAD09153D6CA7385027038292673C2398`. Previous ASI preserved as `scripts\MadMaxModding.asi.before-experimental-label-20261101`, SHA-256 `4FB5395A40FBEB1ED0983D77A9FF33C060D56F9BFB8D4A99E0007C25A2D3ED63`.
+
+## Current state — 2026-10-31 Rhai spawn accessor reserved-word fix installed
+
+- Renamed the script-visible `ctx.spawn` property to `ctx.entities`; `spawn` is reserved by Rhai and caused both `debug_spawn_menu` and `spawn_placement_lab` to fail parsing. Internal Rust storage/capability remains `game.spawn`.
+- Updated generated `MadMaxModding\API.md` and both installed Rhai packages. Source and installed hashes match for both scripts and the API reference.
+- Installed `scripts\MadMaxModding.asi`, SHA-256 `9FE16CB41CA8322974C1561A94B56A0F92C9C81E2E13AF64DA88989C0052A1CE`. Previous ASI preserved as `scripts\MadMaxModding.asi.before-final-rhai-spawn-keyword-fix-20261031`, SHA-256 `A0C515DF8A7466E9E8C6ACA4D335F8C87289FC5F2C369A46F1BBDE07DD458F81`.
+- Added Rhai compile coverage for both packages; five focused package compile tests passed. `cargo check`, release build, and `git diff --check` passed. Mad Max was closed during installation; a new in-game launch is still needed to confirm the two scripts load and run.
+
+## Current state — 2026-10-31 script labs and status palette installed
+
+- Installed the x86_64 MSVC release build as `scripts\MadMaxModding.asi`, SHA-256 `F6CA8D59786EC0D801B81CE690D289310CADC878D51F66B5DE72524F0F0646E7` (11,661,312 bytes). Previous ASI preserved as `scripts\MadMaxModding.asi.before-script-labs-20261031-231118`.
+- Updated `MadMaxModding\API.md`; previous copy preserved as `MadMaxModding\API.md.before-script-labs-20261031-231118`.
+- Installed three packages under `MadMaxModding\scripts`: `debug_spawn_menu`, `spawn_placement_lab`, and `input_boundary_lab`.
+- Added script-visible `ctx.input.available()` so scripts can distinguish inactive mod sampling from an observed released key. Runtime sampling remains disabled; no native Mad Max action suppression is exposed.
+- Added a shared status treatment to script panels and the spawn menu: green stable, yellow problematic, red experimental, with text labels. Only catalog-verified entries can spawn.
+- Added stale-generation cancellation for queued script spawn intents. The only currently verified script-spawn asset remains `props.scrap_stockpile_small`.
+- `cargo fmt --all`, `cargo check --target x86_64-pc-windows-msvc`, and `git diff --check` succeeded. Mad Max was closed at installation. The game has not yet been launched with this build, and Rhai packages still need in-game load verification.
+
 ## Current state — 2026-10-31 same-ray filter comparison probe installed
 
 - Installed the corrected Windows MSVC release build as `scripts\MadMaxModding.asi`, SHA-256 `9B765EDA22775E733DDD5806D97DA9A422F8B862C341C1A88E3E91FD3D50B953` (11,235,328 bytes). The pre-probe ASI is preserved as `scripts\MadMaxModding.asi.before-ray-filter-ab-20261031`, SHA-256 `900B249F2F1F25EDF64815C5D0AD2C84525E07085D01D626DA441DD4BAE0736D`. Superseded probe builds are preserved as `MadMaxModding.asi.before-ray-orientation-correction-20261031` (SHA-256 `EFA3BC532CC88859EF6D98E03E25389FA283107A591AED4882CF0C1B30301CEA`) and `MadMaxModding.asi.before-vtable-readability-check-20261031` (SHA-256 `E7D7FEF326144FEC10F8C3CAA5A75E7F8B5B141946DFF2F7054A90F1C14FE047`).
@@ -364,3 +418,206 @@ The stability audit found that the reticle script read a nonexistent `ctx.frame.
 - Previous ASI and script preserved in `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\MadMaxModding\backups\raycast-stability-20261031-141047`.
 - `cargo fmt --all -- --check`, Windows x64 tests (83 passed), release build, and `git diff --check` completed. Disabled world-query diagnostic hooks still produce dead-code warnings.
 - Mad Max was not running during installation. No game launch or in-game visual verification has been performed; camera-sign and exact reticle alignment remain open until the user checks this build.
+
+## 2026-10-31 — script-owned panels and Ray Workbench
+
+Added a capability-gated `ui.panels` API for bounded script-owned ImGui windows. Rhai publishes owned panel descriptions at callback boundaries; the render world draws those descriptions and sends typed widget changes back for a later `game.post_sim` callback. Panels coexist with the HUD and can be globally hidden from the UI Configurator without unloading scripts. The `reticle_ray` package now publishes a live Ray Workbench with source, filter, range, custom vector, query status, optional hit details, and separate ray/origin/hit visualization controls. Raycast rows were removed from the always-on HUD.
+
+- Deployed release ASI SHA-256: `20CD673EE1B1341697BB6DB5F726F5C8A0110567B8158E98511A20A0CAABA7D2`.
+- Deployed `MadMaxModding\API.md` SHA-256: `0003256A9759F7E81363AFD464B526D0C9D3FE307DCD98EE60C450EC90E2AE54`.
+- Deployed `reticle_ray\manifest.toml` SHA-256: `F91A5ACE3EF4F129C40BC84A132ACD91CF38E79C224B4616D995EA7C81460859`.
+- Deployed `reticle_ray\main.rhai` SHA-256: `A7090B0F21C571C3834BFBAEFEBB7C8A72A3B71378B087772178D8E13B87C46E`.
+- Previous installed files are backed up at `MadMaxModding\backups\script-panels-20261031-145901`.
+- `cargo fmt --all -- --check`, Windows-target `cargo check --locked`, release build, and `git diff --check` completed. No automated tests were run. Rust compiles cleanly apart from existing unused world-query diagnostic hook warnings. The Rhai package and in-game panel behavior still need a launch-time check.
+
+### 2026-10-31 — Rhai script-panel native method registration correction
+
+The first in-game load reported `Function not found: events (MadMaxScriptUi, &str | ImmutableString | String)`. Rhai's registered native methods require a mutable receiver; `InvocationScriptUi::events` and `panel` had immutable receivers, so those methods were not available to scripts. Changed both to `&mut self` and rebuilt/reinstalled the ASI. The failed build is preserved at `MadMaxModding\backups\rhai-panel-methods-20261031-150527\MadMaxModding.asi`.
+
+- Corrected ASI SHA-256: `F7E591415C9596A375C82B9DEC29D03944B8403BD7BFD999456047AD05FE50AD`.
+- `cargo fmt --all`, Windows-target `cargo check --locked`, and release build passed. The `reticle_ray` package is unchanged and still requires an in-game reload to verify method dispatch and panel appearance.
+
+### 2026-10-31 — Rhai panel string-dispatch correction
+
+The same `events` dispatch error persisted after correcting the receiver, showing Rhai was also resolving the panel ID argument as a union of string representations. Panel facade and builder string arguments now accept `Dynamic` and explicitly convert/validate `ImmutableString` values at the API boundary. The new ASI is installed; previous binary backed up at `MadMaxModding\backups\rhai-panel-string-dispatch-20261031-151120\MadMaxModding.asi`.
+
+- Corrected ASI SHA-256: `9410871454B0B0EAB4302D11BA0B31DA3AD9FA3CF34591DDB75F0CD16A3DE3CC`.
+- Windows-target `cargo check --locked`, release build, `cargo fmt --all`, and `git diff --check` passed. User must fully restart Mad Max before retrying because an already loaded ASI cannot be replaced in a running process.
+
+### 2026-10-31 — Rhai panel publication method correction
+
+The user clarified that the latest load error was `Function not found: publish (MadMaxScriptUi, MadMaxPanelBuilder)`. `InvocationScriptUi::publish` still used an immutable receiver, preventing Rhai native-method registration. Changed it to `&mut self`, rebuilt, and installed after Mad Max was closed. The replaced ASI is backed up at `MadMaxModding\backups\rhai-publish-method-20261031-151451\MadMaxModding.asi`.
+
+- Installed ASI SHA-256: `BE80A95F45C72B0EAC715E1EE85B0C1462DFFBBA999C5CA3CC88A6B97B378C90`.
+- Windows-target check, release build, format check, and `git diff --check` passed. This native fix still needs a fresh game launch and script reload to confirm.
+# Camera direction row correction — 2026-10-31
+
+Changed `WorldQueryRayInput::from_camera_matrix` to derive camera-forward from negative row 2 instead of negative row 1. The user observed that the old camera-orientation ray consistently pointed down, while camera-origin rays with a manually downward direction and actor/vehicle orientation were usable. This matches the confirmed actor/vehicle transform convention (row 1 up, row 2 backward). Updated the scripting API catalog and generated `docs/rhai-api.md` to describe the row-2 mapping. No native query, filter, origin, or hit reconstruction code changed.
+
+- Release build: `target\x86_64-pc-windows-msvc\release\madmax_bootstrap.dll`
+- Installed ASI SHA-256: `511AF9F84F15233A9FE17CF708C9F70E71900973BE0E738C7DFB63ADD0B1746F`
+- Preserved previous ASI: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding.asi.before-camera-row2-20261031-154615`
+- Deployed API reference alongside the mod scripts; deployed and source hashes match (`1F6418369E9211FAAA159F9E54EBDBA580592F5A0687765F8E70EEB08C9859A3`).
+- `cargo build --target x86_64-pc-windows-msvc --release --locked` succeeded. No automated tests were run. Mad Max was confirmed not running for deployment; in-game validation is pending.
+
+## 2026-10-31 — camera direction sign correction
+
+After the negative-row-2 build was installed, the user reported that its ray points backward relative to the visible aim. Changed camera direction to positive row 2 (removed negation), rebuilt, and installed after the user closed Mad Max. Actor/vehicle transform interpretation, ray origin, query/filter, and hit reconstruction remain unchanged.
+
+- Installed ASI SHA-256: `730C00472D57E2196A6B48BD6E843807655AF053BCF2B2896B46E7476820E46D`
+- Previous ASI backup: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding.asi.before-camera-row2-positive-20261031-154959`
+- Deployed API reference SHA-256 matches source: `B4F9ABBE8935E8CB6D3A2EAFA1351D6FE497B8DF9FB39036AF24F8B1DDB523BF`
+- Windows x64 release build succeeded; no automated tests were run. The next game launch will validate whether positive row 2 aligns the camera ray with aim.
+
+## 2026-10-31 — Reticle-hit stockpile placement probe
+
+Replaced the configurator's one-shot buggy spawn test with a one-shot stockpile rigid-prop candidate. The control waits for a completed `reticle_ray` hit, places the fixed candidate key at that hit plus 0.5 world-up, and keeps Max's current orientation. No removal control is exposed because native spawn ownership and despawn identity remain unverified.
+
+- `cargo test stockpile_test -- --nocapture`: 2 passed.
+- `cargo build --release`: succeeded.
+- Installed ASI SHA-256: `8DB7D6AEA42A908997352D9160DBEB08FDBCA3158550BE9A842D3A3D7E474D57`.
+- Previous ASI backup: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding\backups\stockpile-raycast-20261031-214231\MadMaxModding.asi`.
+- Mad Max was closed before the installation. In-game spawn appearance and collision still need manual confirmation.
+
+## 2026-10-31 — Hold-Q GMod-style spawn menu
+
+Moved the stockpile probe from the UI Configurator into a dedicated compact spawn menu. Holding Q opens the blue-grey panel with a scrollable item grid; `Props` is active, while `Vehicles` and `NPCs` are disabled placeholders. The first tile is a drawn Scrap Stockpile thumbnail. It stays disabled without both a copied reticle hit and player transform; each click submits a separate typed spawn intent at the hit plus 0.5 world-up while preserving the player transform orientation. Removed the one-shot guard and the configurator test control. Q key state temporarily captures game input, and focus loss clears the held state. Native despawn and object-ID work remain unchanged.
+
+- Installed ASI SHA-256: `14D8F4EA8B93FCAF6BD66D0145EF6243B35B8FE75BF92234CAA9E9CD8E578174`.
+- Prior menu candidate backup: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding.asi.before-gmod-spawn-menu-mode-fix-20261031` (SHA-256 `A7A574FA7DD30DD0532920EE8E9A661169868E1508DB430303F9683B8DB4F18C`). Pre-menu stockpile build backup remains at `MadMaxModding.asi.before-gmod-spawn-menu-20261031` (SHA-256 `8DB7D6AEA42A908997352D9160DBEB08FDBCA3158550BE9A842D3A3D7E474D57`).
+- `cargo fmt --all -- --check`, `cargo test` (87 passed), `cargo build --release --locked`, and `git diff --check` passed. The release still reports existing unused world-query tap warnings.
+- In-game validation is pending. In particular, check Q hold/release, whether the initial Q press triggers a native action, whether no-hit state disables the tile, and whether multiple clicks create multiple stockpiles. hudhook queues window messages asynchronously, so this transition has not yet been visually verified.
+
+## 2026-10-31 — Expanded spawn catalog browser
+
+Replaced the one-item hard-coded browser data with a generated projection of the curated catalog plus the existing community discovery list. The browser now shows 466 unique entries across Props (1), Vehicles (40), World Compositions (422), and Discovered (3), searchable by display name, category, or exact asset key. Green `STABLE`, yellow `PROBLEMATIC`, and red `EXPERIMENTAL` labels remain explicit; only curated verified entries enable spawning, and the native allowlist remains authoritative. The community entries are still discovery-only and are not asserted to exist in the local archives.
+
+To avoid turning the large catalog into per-frame UI work, the match buffer is reused and ImGui's list clipper draws only visible tile rows. This is an implementation measure, not a live performance benchmark; in-game smoothness still needs the user's check.
+
+- Catalog source generator: `tools/generate_spawn_catalog.py`; output: `src/devtools/overlay/spawn_menu_catalog.rs`.
+- `cargo fmt -- --check`, Windows-target `cargo check`, `cargo build --release --target x86_64-pc-windows-msvc`, and `git diff --check` passed. No automated tests were added or run, as directed by the workbench plan.
+- Confirmed Mad Max was not running before deployment.
+- Installed ASI SHA-256: `CAF3CAF5ED67D395DC4FF02FFEBA0D1CB1E73BA11E2170C56554E12C34A9CC59`.
+- Previous ASI backup: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding.asi.before-spawn-catalog-browser-20261031` (SHA-256 `9FE16CB41CA8322974C1561A94B56A0F92C9C81E2E13AF64DA88989C0052A1CE`).
+- In-game rendering and frame-time validation are pending.
+
+## 2026-10-31 — Spawn-menu ray-query rate experiment
+
+The user clarified that slowdown accumulates across the whole game while holding Q, rather than being limited to the menu UI. As a controlled hypothesis test, the spawn-menu reticle query is now sampled at most 20 Hz, with the latest hit retained for up to 100 ms and cleared when Q is released. This reduces repeated synchronous physics queries while keeping placement responsive. It is not yet established that this was the source of the accumulating slowdown; if it persists, instrument UI drawing and callback/raycast timings separately.
+
+- Windows x64 release build succeeded; format, target check, and `git diff --check` passed. No automated tests were run.
+- Installed ASI SHA-256: `8020E03A396D67DAD7D1DADA6C20355D2C5E8B20041ACDA1A65FD89B5280DD59`.
+- Previous catalog build backup: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding.asi.before-spawn-ray-20hz-20261031` (SHA-256 `CAF3CAF5ED67D395DC4FF02FFEBA0D1CB1E73BA11E2170C56554E12C34A9CC59`).
+- In-game result is pending. Check whole-game slowdown during a comparable Q hold, and verify that stockpile placement still uses the ray hit.
+
+## 2026-10-31 — Spawn-menu click-triggered raycast
+
+The user clarified that whole-game slowdown accumulates over time, and requested that the spawn-menu query run only when needed. Removed the Q-held raycast polling/cache. Clicking an enabled catalog tile now queues a single request; the next accepted game callback performs one camera raycast and returns its result to the UI. A hit submits the spawn at that location; a miss reports a retry message. No query runs merely because Q is held or the menu is open.
+
+- `cargo fmt --all -- --check`, Windows x64 `cargo check`, release build, and `git diff --check` passed. Existing unrelated unused world-query hook warnings remain; no automated tests were run.
+- Installed ASI SHA-256: `72E06C10AE3A96A0AA43A37A960F743774208688CCEBF542760146581A9CBF27`.
+- Previous ASI backup: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding.asi.before-spawn-ray-one-shot-20261031` (SHA-256 `8020E03A396D67DAD7D1DADA6C20355D2C5E8B20041ACDA1A65FD89B5280DD59`).
+- Mad Max was confirmed closed before deployment. In-game behavior and performance validation are pending.
+
+## 2026-10-31 — Spawn-menu catalog filtering cache
+
+The user identified severe mouse-cursor input lag in the UI, especially the spawn menu. Static inspection found that the browser rebuilt its filtered entry vector every render frame and rescanned the full catalog for each tab count, despite the grid already clipping visible rows. Cached the match list until the search text or selected tab changes, and computed tab counts once. This should reduce UI-thread work, but it is not proof of the lag's root cause; if the issue persists, instrument render/input timing before further changes.
+
+- Windows x64 `cargo check` and release build, formatting, and `git diff --check` passed. Existing unused world-query hook warnings remain; no automated tests were run.
+- Installed ASI SHA-256: `7ECECBFA3BDE2F745A4109800E53B11ED5A86608C383E42466B77B86A28476EA`.
+- Previous ASI backup: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding.asi.before-spawn-menu-cache-20261031` (SHA-256 `72E06C10AE3A96A0AA43A37A960F743774208688CCEBF542760146581A9CBF27`).
+- Mad Max was confirmed closed before deployment. In-game cursor responsiveness and cumulative slowdown validation are pending.
+
+## 2026-11-01 — Demand-driven shared camera-ray frame result
+
+Made camera-aim raycasts demand-driven. `ctx.raycast.camera(max_distance, filter)` now uses the copied camera origin and direction. The Ray Workbench submits only after its explicit **Cast ray** action; the spawn browser submits only after a spawnable tile is selected, and its Q-held UI is gated on the active `debug_spawn_menu` package. The native adapter creates a lazily populated, frame-scoped shared result table only when requests exist, runs one native query for identical origin/direction/range/filter requests in that game callback, and fans the result out to each script's own ticket. The shared table is discarded after the callback so it cannot return stale camera data on a later frame. The custom-origin `ctx.raycast.request(...)` API remains available.
+
+- `cargo fmt --all -- --check`, Windows x64 `cargo check --locked`, and release build succeeded. No automated tests were run. Existing unused world-query hook warnings remain.
+- Installed ASI SHA-256: `02A1EFD969283CE28FB43A8B2185B16BB53E548F1C1C65D2BFE010FE57FD44AD`.
+- Previous ASI preserved as `scripts\MadMaxModding.asi.before-demand-shared-ray-20261101`, SHA-256 `7ECECBFA3BDE2F745A4109800E53B11ED5A86608C383E42466B77B86A28476EA`.
+- Installed `MadMaxModding\API.md` SHA-256: `AC72D502252283210863AACC2B71573BC669EC66D17D06C9E20295196CA57261`.
+- Deployed `debug_spawn_menu` and `reticle_ray` manifest/source files match their examples in the repository. Prior package folders are in `MadMaxModding\backups\` with the `before-demand-shared-ray-20261101` suffix.
+- Mad Max was closed during installation. Startup, script discovery/gating, one-shot query behavior, and in-game performance still need the user's next manual launch check.
+## 2026-11-01 — Catalog-wide yellow spawn attempts and camera workbench
+
+Updated the catalog semantics so green means verified, yellow means an unverified attempt that may work or may not, and red means there is no usable asset path for the generic spawn call. All 466 current catalog entries have safe-relative asset paths: one green stockpile and 465 yellow experimental entries, including Roadkill Lootbox. The generated spawn table accepts only catalog IDs and maps them to exact catalog asset keys; it does not accept free-form paths. The generic script spawn route now sends every yellow selection through the existing one-shot camera ray before submitting it to Mad Max. Yellow attempts may fail or crash.
+
+Added the separate `freecam_workbench` package and a bounded, short-lived camera pose override API. A MinHook detour calls `CCameraControlManager::GetCameraMatrix` and modifies only its output matrix when the script refreshes the override. This is an experimental getter-output override, not a detached/flying camera; actual camera consumers, framing, rotation convention, and startup safety have not been validated in-game.
+
+- Generated browser and spawn-key sources: `src/devtools/overlay/spawn_menu_catalog.rs` and `src/api/scripts/spawn_catalog.rs`.
+- `cargo fmt -- --check`, `cargo check`, `cargo build --release`, and `git diff --check` succeeded. Existing unused world-query tap warnings remain. No automated tests were run.
+- Mad Max was not running at installation time.
+- Installed ASI SHA-256: `4FB5395A40FBEB1ED0983D77A9FF33C060D56F9BFB8D4A99E0007C25A2D3ED63` (11,903,488 bytes).
+- Previous ASI backup: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding\backups\catalog-wide-freecam-20261101\MadMaxModding.asi`, SHA-256 `02A1EFD969283CE28FB43A8B2185B16BB53E548F1C1C65D2BFE010FE57FD44AD`.
+- Installed `API.md` SHA-256 matches generated source: `388D55CD24BB83703CC5D8B30F6839C6376B961D183F88A1CC8B84D0473A158C`.
+- Installed `debug_spawn_menu` source matches repository example, SHA-256 `AA69CE44E1BE4DA7A5275CC5E0EEE14E4C5436F1F1E36F9810AB82267EAFCB96`.
+- Installed `freecam_workbench` source matches repository example, SHA-256 `7054DA93E07DF1EFE7B0F9DBEF8ABAADAF466655B1D32DCA77382E5B12C8DD82`.
+- In-game startup, yellow catalog attempts, and camera pose behavior still require user verification. A yellow entry is allowed to fail or crash by design.
+
+## 2026-11-01 — Compact GMod browser and selectable console transcript
+
+Replaced the fixed spawn panel with a viewport-aware three-pane browser: category tabs, a folder tree, a clipped item grid, and a Tools/Settings sidebar. Compact tiles with small category icons are the default; larger tile sizes remain configurable. The sidebar embeds the spawn script’s tool controls and owned-spawn removal list. Hovering a tile shows its full catalog key and status.
+
+Spawn lifecycle events now report the catalog ID and request/native IDs to the console, distinguishing queued/submitted from game-observed success or failure. The Dev Tools console now renders its grouped `CMD:`/`SCRIPT:` transcript in one read-only multiline text field with small spacing and font scale. Native range selection and Ctrl+C work across entries; there is no separate copy button. The command prompt/history remains below the transcript.
+
+- `cargo fmt --all -- --check`, `cargo check --locked`, `cargo build --release --locked --target x86_64-pc-windows-msvc`, and `git diff --check` passed. No tests were run.
+- Mad Max was closed before installation.
+- Installed ASI SHA-256: `CFFC8DCD33E569668ECECE65D0DDF233EC3E864ED5DA2C39B261408144E3E42D` (11,986,432 bytes).
+- Previous ASI backup: `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\scripts\MadMaxModding\backups\gmod-spawn-browser-console-20261101\MadMaxModding.asi`, SHA-256 `A406391FB436BC59C0B694F46E5AB68FAD09153D6CA7385027038292673C2398`.
+- Startup, layout density, cross-entry text selection/copy, and spawn lifecycle messages await in-game confirmation.
+
+## 2026-11-01 — Engine Workbench script and editable-field probes
+
+Added and deployed the hot-reloadable `engine_workbench` Rhai package. It publishes one selector-driven panel with Camera, Vehicle, Player, Vehicle tuning, Weapons, and Upgrades pages. Camera offset/rotation and bounded vehicle velocity/jump controls use existing bridge calls; player/vehicle/camera data are copied readouts. Vehicle tuning, weapon/damage, and upgrade pages show concrete compiled-script leads but do not expose fake sliders or claim those game-script methods are Rust APIs.
+
+Refreshed the ignored local asset manifest and gallery to include selected read-only previews of the bullet damage handler, vehicle body-health handler, animation offset task, and engine config sample. The preview shows `HitByBullet` and `Damage`/`Impulse`/`AmmunitionType`; the body-health script shows `GetBodyHealth`, `GetMaxHealth`, and `SetHealth`; the acceleration upgrade script shows vehicle stat mutators including `ChangeMass`, `ChangeAccelerationScale`, and `SetRevStartupTime`. These are symbols and call-path clues, not recovered signatures or callable bridge methods. No native ASI or generated API reference changed.
+
+- Deployed package: `MadMaxModding\scripts\engine_workbench`; source and deployed `main.rhai` SHA-256 match (`80FC9F3C25471E8F3A1AFE18DC7FCDB7A342098959FB58F1C6F8F6A4AA6F2850`); manifest hashes match (`B7C2B0617FD68FBEBAE337A8010702D07ADD042174C59FAA0FFD7B1D35E7DFEB`).
+- The installed package can be rescanned and loaded from Dev Tools → Scripts. Rhai compilation and runtime behavior remain unverified until the next in-game load.
+- The local `target/content-index/asset-workbench.html` was regenerated with 22 selected preview records; game payloads and extracted data remain in ignored `target/` output.
+
+## 2026-11-01 — Mad Max Sandbox Suite expansion
+
+Expanded the existing `engine_workbench` package into one 16-page Mad Max Sandbox panel. Live pages expose bounded camera adjustment, copied runtime/player/vehicle telemetry, deferred camera-ray visualization, one-shot catalog spawning after a fresh ray hit, the known gizmo variants, coordinate comparisons, and vehicle velocity/jump writes. WIP pages cover vehicle tuning, weapon/damage, Max upgrades, GameObjects/Havok, NPC/animation, and effects/assets using the locally inspected compiled-resource names. Those names remain investigation leads rather than callable bindings.
+
+Corrected the spawn probe to capture the selected catalog ID at click time, so changing the selection while its deferred ray is pending cannot silently change the eventual spawn request. The package has 16 selector choices and 135 unique widget IDs. Static review and `git diff --check` found no source whitespace errors; the only Git output was the repository's existing LF-to-CRLF notices. No automated tests, Rhai runtime compile, ASI build, or API reference change was performed. Mad Max was running during deployment; only `main.rhai` was atomically replaced, and the prior installed script was preserved at `MadMaxModding\backups\engine-workbench-before-suite-final-20261101\main.rhai`.
+
+- Installed package: `MadMaxModding\scripts\engine_workbench`.
+- `main.rhai` SHA-256 source/deployed match: `50222059D1BB7593E1F1294D64C48ADB13778458DA1DE471A29504F96BB71903`.
+- `manifest.toml` SHA-256 source/deployed match: `166A69150C1FB8635B122B7D6F243B5275AB7D796DB2A78E68B7A2B35A9B584F`.
+- `README.md` SHA-256 source/deployed match: `17EED43D66D49BAEA8FAAEBADEFD64A301D4C830022F3480A053CEB4032D850B`.
+- In-game Rhai compilation, menu fit, and action behavior still need confirmation through Dev Tools → Scripts → Rescan/Reload.
+
+## 2026-11-01 — Freecam, hybrid vehicle flight, and captured script input
+
+Enabled the existing mod-owned keyboard/mouse sampler only while F1 overlay capture owns input and no text field requests it. Added keyboard-driven `freecam_workbench` movement using the bounded, expiring `GetCameraMatrix` output override, and `hybrid_flight`, which moves a script-owned vehicle target and applies bounded velocity corrections through the known vehicle setter. Updated the Engine Workbench and Input Boundary Lab status text to distinguish overlay-captured input from native game input. This does not provide native keybind-menu registration, XInput capture, per-action game-input suppression, a detached render camera, Max transform writes, or collision bypass. Vehicle flight is a position-hold controller with normal physics/collisions active, not noclip.
+
+- Windows x64 locked `cargo check` and release build succeeded. Targeted formatting, script/widget static checks, and `git diff --check` were run; no automated tests were run. Rhai runtime compilation and movement behavior have not been verified in-game.
+- Installed ASI SHA-256: `5CCC6F00A3D91C197C79613AD089600FCA2F1235B1E8FB118E5A48DE0A549711` (7,335,424 bytes).
+- Previous ASI and replaced package/API copies were backed up to `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\MadMaxModding\backups\freecam-flight-input-20261101`.
+- Previous ASI SHA-256: `75BEDEFC94874C4779E6816BD808A2E7C4F4A509C55752FC847610D2AC915014` (7,437,824 bytes).
+- Installed `API.md` SHA-256: `6EF5D14B9D6A81176A090CA9CB633A3FFC2B3293CC521FB64230250F2E082041`.
+- Installed `freecam_workbench`, `hybrid_flight`, `engine_workbench`, and `input_boundary_lab`; every staged file in those packages and `API.md` matched the installed copy by SHA-256.
+- Mad Max was confirmed closed for installation and was not launched afterward. Startup and the script package behavior await the user's next launch.
+
+### Startup rollback — 2026-11-01
+
+The user reported that Mad Max crashed after installing the freecam/flight/input candidate. Windows Application Error records show two MadMax.exe crashes at 06:27:19 and 06:34:12 CET, both faulting in `MSVCR100.dll` at offset `0x761c9` with exception `0x40000015` (`STATUS_FATAL_APP_EXIT`). The mod bootstrap log for the later attempt ends after installing the DX11 overlay, callback probe, and experimental camera getter hook; it does not record entry into the game callback. This narrows the failure to startup/early runtime, but does not identify the responsible module or prove that input sampling caused it. The WER report directory denied direct file access, so no stack dump was available.
+
+Rolled back the installed ASI to the pre-candidate copy (SHA-256 `75BEDEFC94874C4779E6816BD808A2E7C4F4A509C55752FC847610D2AC915014`) and preserved the failed candidate (SHA-256 `5CCC6F00A3D91C197C79613AD089600FCA2F1235B1E8FB118E5A48DE0A549711`) at `C:\Program Files (x86)\Steam\steamapps\common\Mad Max\MadMaxModding\backups\freecam-flight-input-20261101\MadMaxModding.asi.crashing-candidate`. Restored the pre-candidate `API.md`, `engine_workbench`, and `input_boundary_lab`; moved `freecam_workbench` and `hybrid_flight` out of active script discovery into `backups\freecam-flight-input-20261101\candidate-packages`.
+
+The user confirmed that the pre-candidate installation launches. The first diagnostic rebuild retained the crash and logged the exact Rust panic, so broad native-code bisection is no longer needed for this failure.
+
+The diagnostic rebuild retained the crash and logged the exact Rust panic: the first ImGui render called `sample_and_publish_input`, which requested `PendingUiInput` from the UI Bevy world; `create_ui_app()` had never initialized that resource. The panic crossed Hudhook's callback boundary and caused the fatal process exit. The resource was initialized in `create_ui_app()`.
+
+Installed the corrected build and restored `engine_workbench`, `input_boundary_lab`, `freecam_workbench`, `hybrid_flight`, and the matching `API.md`. The old installed ASI remains backed up at the path above; diagnostic and failing candidate binaries remain preserved. Corrected installed ASI SHA-256: `0B8E301C85DF891D9EC854564B38E661ED797EDDBC3FD6349E07E5E03C3601F0` (7,428,096 bytes). Installed `API.md` SHA-256: `6EF5D14B9D6A81176A090CA9CB633A3FFC2B3293CC521FB64230250F2E082041`. Windows x64 `cargo check` and release build succeeded; targeted Rust formatting passed. No automated tests were run. Mad Max was closed during deployment; the fixed build's startup and script behavior now need one confirmation.
+
+## 2026-11-01 — Direct vehicle flight and camera getter diagnostics
+
+Changed `hybrid_flight` from a script-owned position target with proportional velocity correction to direct camera-relative velocity commands. W/S move forward and backward, A/D strafe, and Space/Left Ctrl move vertically. With F1 capture unavailable, the script sends no velocity write. While enabled and input capture is active, no movement key requests zero velocity for a hover. Game physics and collision remain active. The public SDK's `CCharacter`, `CDamageable`, and `CPhysicsGameObject` declarations do not expose a player velocity setter, so the script remains vehicle-only until a player movement adapter is confirmed.
+
+Added external-call and external-override counters to `game.camera.control`, excluding the mod's own camera telemetry sampling. These count calls reaching the hooked getter and overrides applied to its returned matrix; they do not prove the renderer consumes that matrix. `freecam_workbench` displays both counters so the next in-game check can separate a dead hook path from a render-consumer mismatch. Added the camera-control methods to the generated API reference grouping.
+
+- `cargo check` and optimized release build succeeded; no automated tests were run. `cargo fmt --check` reports existing formatting differences across generated and other tracked files, so only the edited Rust files were rustfmt-formatted.
+- Final installed ASI SHA-256: `805A6C9B6FBCC7E6EA76E89D21ED4E3D749BDBCE3A9886AFEA0CC959C556CBD9`. The intermediate candidate was preserved at `MadMaxModding\backups\freecam-direct-velocity-final-20261101\MadMaxModding.asi.intermediate`; the pre-change installed ASI and script files are preserved under `MadMaxModding\backups\freecam-direct-velocity-20261101`.
+- Installed `hybrid_flight`, `freecam_workbench`, and `API.md` match their repository source by SHA-256. Mad Max was closed during deployment and has not been launched with this build.

@@ -11,6 +11,7 @@
 //! `api::game::native`; managed scripts use [`crate::api::scripts`].
 pub mod components;
 mod ids;
+pub(crate) use ids::NEXT_INTENT_ID;
 pub mod input;
 pub mod input_key;
 pub mod intents;

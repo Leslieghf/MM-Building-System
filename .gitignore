@@ -2,8 +2,12 @@
 /.idea/
 /.madmax-cdebug-renderer-target/
 /.madmax-crash-target/
+/.superpowers/
 *.asi
 *.dll
 *.pdb
 *.exp
 *.lib
+__pycache__/
+*.py[cod]
+docs/research/startup-*.tsv

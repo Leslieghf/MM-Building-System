@@ -5,7 +5,7 @@
 //! manifest-size, and package-count limits prevent an unbounded scan; source
 //! compilation belongs to the loader worker after a package is selected.
 use super::*;
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 pub(super) fn discover(
     configured_root: Option<&Path>,
@@ -84,12 +84,76 @@ fn scan_root(root: &Path, display_root: String, request_id: Option<u64>) -> Scri
         }
     }
     packages.sort_by(|left, right| left.package_name.cmp(&right.package_name));
+    annotate_dependency_status(root, &mut packages);
     result(
         request_id,
         display_root,
         packages,
         truncated.then(|| "scan limit reached; results are truncated".into()),
     )
+}
+
+fn annotate_dependency_status(root: &Path, packages: &mut [DiscoveredScript]) {
+    let manifests = packages
+        .iter()
+        .filter_map(|package| {
+            if package.issue.is_some() {
+                return None;
+            }
+            let id = package.id.as_ref()?;
+            let path = root.join(package.package_name.as_str());
+            let path = confined(root, &path).ok()?;
+            let text = read_bounded(root, &path.join("manifest.toml"), MAX_MANIFEST_BYTES).ok()?;
+            let manifest = toml::from_str::<ScriptManifest>(&text).ok()?;
+            manifest.validate(id).ok()?;
+            Some((id.clone(), manifest))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for package in packages {
+        let (Some(id), Some(summary)) = (&package.id, &mut package.manifest) else {
+            continue;
+        };
+        let Some(manifest) = manifests.get(id) else {
+            continue;
+        };
+        let state = match super::super::package_graph::resolve_order(id, &manifests) {
+            Err(reason) => {
+                super::super::package::DependencyState::Blocked(bounded_text(&reason, 160))
+            }
+            Ok(_) => {
+                let unavailable = manifest
+                    .requires
+                    .iter()
+                    .filter(|requirement| requirement.optional)
+                    .filter(|requirement| match requirement.kind {
+                        crate::api::scripts::package::PackageRequirementKind::HostApi => {
+                            !super::super::package_graph::host_api_version(&requirement.id)
+                                .is_some_and(|version| requirement.version.matches(&version))
+                        }
+                        crate::api::scripts::package::PackageRequirementKind::Package => {
+                            ScriptId::parse(requirement.id.clone())
+                                .ok()
+                                .and_then(|dependency| manifests.get(&dependency))
+                                .is_none_or(|dependency| {
+                                    !requirement.version.matches(&dependency.version.0)
+                                })
+                        }
+                    })
+                    .map(|requirement| requirement.id.as_str())
+                    .collect::<Vec<_>>();
+                if unavailable.is_empty() {
+                    super::super::package::DependencyState::Ready
+                } else {
+                    super::super::package::DependencyState::OptionalUnavailable(bounded_text(
+                        &format!("optional unavailable: {}", unavailable.join(", ")),
+                        160,
+                    ))
+                }
+            }
+        };
+        summary.dependency_state = state;
+    }
 }
 
 fn discover_entry(
@@ -161,7 +225,7 @@ fn discover_package(root: &Path, package: PathBuf, name: String, id: ScriptId) -
                 .err()
                 .map(|_| "manifest ID is invalid".into())
         })
-        .or_else(|| validate_entry(root, &package).err());
+        .or_else(|| validate_entries(root, &package, &manifest).err());
     DiscoveredScript {
         package_name: name,
         id: Some(id),
@@ -170,13 +234,15 @@ fn discover_package(root: &Path, package: PathBuf, name: String, id: ScriptId) -
     }
 }
 
-fn validate_entry(root: &Path, package: &Path) -> Result<(), String> {
-    let main = confined(root, &package.join("main.rhai"))?;
-    if main.is_file() {
-        Ok(())
-    } else {
-        Err("main.rhai is not a regular file".into())
+fn validate_entries(root: &Path, package: &Path, manifest: &ScriptManifest) -> Result<(), String> {
+    for relative in &manifest.sources {
+        let source = confined(root, &package.join(relative))
+            .map_err(|error| format!("{relative}: {error}"))?;
+        if !source.is_file() {
+            return Err(format!("{relative} is not a regular file"));
+        }
     }
+    Ok(())
 }
 
 fn unresolved_root(request_id: Option<u64>) -> ScriptDiscoveryResult {

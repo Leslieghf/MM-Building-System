@@ -17,7 +17,18 @@ use std::thread;
 /// Entry called by the ASI loader after this library is loaded into Mad Max.
 #[unsafe(no_mangle)]
 pub extern "system" fn InitializeASI() {
+    install_panic_diagnostics();
     let _ = panic::catch_unwind(AssertUnwindSafe(startup));
+}
+
+fn install_panic_diagnostics() {
+    let previous = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let thread = thread::current();
+        let thread_name = thread.name().unwrap_or("unnamed");
+        append_log(&format!("Rust panic on thread {thread_name}: {info}"));
+        previous(info);
+    }));
 }
 
 fn startup() {

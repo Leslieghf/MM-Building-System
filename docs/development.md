@@ -13,6 +13,8 @@ cargo doc --no-deps --target x86_64-pc-windows-msvc
 
 The artifact is under `target/x86_64-pc-windows-msvc/release/`. Deployment and game installation are manual. These commands compile and document Rust code; they do not validate native addresses or behavior in a live game.
 
+Normal builds keep reverse-engineering ray hooks disabled. Build a research capture variant with `--features research-taps`; those hooks observe game-owned ray activity and add work to the game's ray-query path.
+
 ## Implementation map
 
 | Path | Change here when |

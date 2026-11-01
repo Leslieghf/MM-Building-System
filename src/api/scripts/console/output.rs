@@ -81,11 +81,14 @@ impl ConsoleOutput {
                 Err(TryRecvError::Disconnected) => {
                     if !self.disconnected {
                         self.disconnected = true;
-                        self.record(ConsoleEvent::new(
-                            None,
-                            ConsoleSeverity::Error,
-                            "game console event channel disconnected",
-                        ));
+                        self.record(
+                            ConsoleEvent::new(
+                                None,
+                                ConsoleSeverity::Error,
+                                "game console event channel disconnected",
+                            )
+                            .from_rust_module(module_path!()),
+                        );
                     }
                     break;
                 }
@@ -94,7 +97,8 @@ impl ConsoleOutput {
         let dropped = receiver.take_dropped();
         if dropped != 0 {
             self.record(ConsoleEvent::new(None, ConsoleSeverity::Warning,
-                &format!("console event queue overload: {dropped} events dropped; output/results may be missing; use script list/status to refresh")));
+                &format!("console event queue overload: {dropped} events dropped; output/results may be missing; use script list/status to refresh"))
+                .from_rust_module(module_path!()));
         }
     }
 }

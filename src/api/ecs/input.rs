@@ -28,12 +28,23 @@ const INPUT_WORDS: usize = 16;
 /// consuming a mailbox sample.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct InputFrame {
+    available: bool,
     down: [u64; INPUT_WORDS],
     just_pressed: [u64; INPUT_WORDS],
     just_released: [u64; INPUT_WORDS],
 }
 
 impl InputFrame {
+    /// Whether this snapshot contains samples from the mod-owned UI backend.
+    pub fn is_available(self) -> bool {
+        self.available
+    }
+
+    /// Mark a sampled frame as available, including frames where no key is held.
+    pub fn set_available(&mut self) {
+        self.available = true;
+    }
+
     /// Whether a supported key is held in this frame.
     ///
     /// `key` is the stable numeric ID from [`InputKey::id`](crate::api::ecs::input_key::InputKey::id).
@@ -82,6 +93,7 @@ impl InputFrame {
     /// Repeated samples before consumption preserve all observed press/release
     /// edges while the held state comes from the newest sample.
     pub fn accumulate_sample(&mut self, sample: Self) {
+        self.available = sample.available;
         self.down = sample.down;
         for i in 0..INPUT_WORDS {
             self.just_pressed[i] |= sample.just_pressed[i];

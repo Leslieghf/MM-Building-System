@@ -6,7 +6,8 @@
 //! not retain game pointers or apply script effects.
 mod actors;
 mod camera;
-mod reticle;
+pub(super) mod reticle;
+mod spawns;
 mod telemetry;
 pub(super) use actors::*;
 pub(super) use camera::*;
@@ -53,6 +54,7 @@ pub(super) fn current_game_snapshot(thread_id: u32) -> GameSnapshot {
             address => Some(address),
         },
         sample_sequence: GAME_SAMPLE_SEQUENCE.load(Ordering::Acquire),
+        spawn_system_events: spawns::sample_spawn_system_events(),
         sample_age_seconds,
         callback_thread_id: Some(thread_id),
         callback_stable_streak: CALLBACK_STABLE_STREAK.load(Ordering::Acquire),

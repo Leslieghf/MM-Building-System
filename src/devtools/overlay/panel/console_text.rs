@@ -29,6 +29,7 @@ struct AnsiStyle {
     bold: bool,
 }
 
+#[allow(dead_code)]
 pub(super) fn draw_ansi_text(ui: &imgui::Ui, text: &str, severity_color: [f32; 4]) {
     let mut style = AnsiStyle::default();
     let mut plain = String::new();

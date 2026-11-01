@@ -28,8 +28,7 @@ pub struct ScriptConsoleUiState {
     pub history_cursor: Option<usize>,
     pub history_draft: String,
     pub follow_output: bool,
-    pub wrap_console_lines: bool,
-    pub selected_console_text: Option<String>,
+    pub transcript_text: String,
     pub scroll_y: f32,
     pub restore_scroll: bool,
     pub focus_prompt: bool,
@@ -43,6 +42,7 @@ pub struct ScriptConsoleUiState {
     pub initial_scan_started: bool,
     pub pending_discovery_request: Option<u64>,
     observed_output_revision: u64,
+    observed_transcript_revision: u64,
 }
 
 impl Default for ScriptConsoleUiState {
@@ -55,8 +55,7 @@ impl Default for ScriptConsoleUiState {
             history_cursor: None,
             history_draft: String::new(),
             follow_output: true,
-            wrap_console_lines: true,
-            selected_console_text: None,
+            transcript_text: String::new(),
             scroll_y: 0.0,
             restore_scroll: true,
             focus_prompt: true,
@@ -70,6 +69,7 @@ impl Default for ScriptConsoleUiState {
             initial_scan_started: false,
             pending_discovery_request: None,
             observed_output_revision: 0,
+            observed_transcript_revision: 0,
         }
     }
 }
@@ -82,6 +82,17 @@ pub enum DevToolsTab {
 }
 
 impl ScriptConsoleUiState {
+    /// Rebuild the plain-text transcript only when retained output changes.
+    /// Keeping it as one read-only multiline input gives ImGui native range
+    /// selection and copy behavior across command and script groups.
+    pub fn refresh_transcript(&mut self, output: &ConsoleOutput) {
+        if self.observed_transcript_revision == output.revision() {
+            return;
+        }
+        self.observed_transcript_revision = output.revision();
+        self.transcript_text = build_console_transcript(output.events());
+    }
+
     pub fn remember_input(&mut self) {
         if !self.input.trim().is_empty() && self.history.back() != Some(&self.input) {
             self.history.push_back(crate::api::scripts::bounded_text(
@@ -196,4 +207,119 @@ impl ScriptConsoleUiState {
         }
         self.loaded_scripts.push(row);
     }
+}
+
+fn build_console_transcript(
+    events: &VecDeque<crate::api::scripts::console::ConsoleEvent>,
+) -> String {
+    use crate::api::scripts::console::{ConsoleEvent, ConsoleSeverity};
+    use std::collections::HashSet;
+
+    fn severity_label(severity: ConsoleSeverity) -> &'static str {
+        match severity {
+            ConsoleSeverity::Info => "INFO",
+            ConsoleSeverity::Warning => "WARN",
+            ConsoleSeverity::Error => "ERROR",
+        }
+    }
+
+    fn append_event(
+        text: &mut String,
+        event: &ConsoleEvent,
+        indent: bool,
+        in_command: bool,
+        last_section: &mut Option<String>,
+    ) {
+        let lifecycle = matches!(
+            event.text.as_str(),
+            "Preparing"
+                | "Prepared"
+                | "Loaded"
+                | "Reloaded"
+                | "Unloaded"
+                | "Queued"
+                | "Cancelled"
+                | "Superseded"
+        );
+        if in_command {
+            *last_section = None;
+            text.push_str("  ");
+        } else if let Some(module) = event.source_module.as_ref() {
+            if last_section.as_deref() != Some(module.as_str()) {
+                if !text.is_empty() && !text.ends_with("\n\n") {
+                    text.push('\n');
+                }
+                text.push_str(&format!("Rust: {module}\n"));
+            }
+            *last_section = Some(module.clone());
+            text.push_str("  ");
+        } else if let Some(script) = event.script.as_ref().filter(|_| !lifecycle) {
+            let phase = event
+                .phase
+                .map(|phase| phase.as_str())
+                .unwrap_or("callback");
+            let section = format!("{} @ {phase}", script.as_str());
+            if last_section.as_deref() != Some(section.as_str()) {
+                if !text.is_empty() && !text.ends_with("\n\n") {
+                    text.push('\n');
+                }
+                text.push_str(&format!("Rhai: {section}\n"));
+            }
+            *last_section = Some(section);
+            text.push_str("  ");
+        } else {
+            *last_section = None;
+            if indent {
+                text.push_str("  ");
+            }
+        }
+        text.push_str(severity_label(event.severity));
+        text.push_str(": ");
+        text.push_str(&crate::devtools::overlay::plain_console_text(&event.text));
+        text.push('\n');
+    }
+
+    let mut text = String::new();
+    let mut rendered_requests = HashSet::new();
+    let mut last_section = None;
+    let mut index = 0;
+    while index < events.len() {
+        let event = &events[index];
+        if let Some(command) = event.text.strip_prefix("> ") {
+            last_section = None;
+            if !text.is_empty() && !text.ends_with("\n\n") {
+                text.push('\n');
+            }
+            text.push_str("Cmd: ");
+            text.push_str(command);
+            text.push('\n');
+            if let Some(request_id) = event.request_id {
+                rendered_requests.insert(request_id);
+                for response in events.iter().filter(|response| {
+                    response.request_id == Some(request_id) && !response.text.starts_with("> ")
+                }) {
+                    append_event(&mut text, response, true, true, &mut last_section);
+                }
+            } else {
+                let mut response_index = index + 1;
+                while response_index < events.len() {
+                    let response = &events[response_index];
+                    if response.text.starts_with("> ") || response.request_id.is_some() {
+                        break;
+                    }
+                    append_event(&mut text, response, true, true, &mut last_section);
+                    response_index += 1;
+                }
+                index = response_index.saturating_sub(1);
+            }
+            text.push('\n');
+        } else if !event
+            .request_id
+            .is_some_and(|request_id| rendered_requests.contains(&request_id))
+        {
+            append_event(&mut text, event, true, false, &mut last_section);
+        }
+        index += 1;
+    }
+    text
 }

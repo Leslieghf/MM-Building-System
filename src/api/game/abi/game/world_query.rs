@@ -304,13 +304,19 @@ pub struct WorldQueryRayInput {
 }
 
 impl WorldQueryRayInput {
-    /// Builds a normalized candidate view ray from the camera transform. The
-    /// current sign convention negates the SDK's `Forward()` row; gameplay
-    /// validation is still needed to confirm it matches the visible view.
-    /// Returns `None` for invalid matrices or a degenerate forward vector.
+    /// Builds a normalized view ray from the camera transform.
+    ///
+    /// The camera matrix's row 2 is used as its forward direction. In-game
+    /// observation shows negating this row points backward; this camera basis
+    /// is distinct from the observed actor/vehicle transform convention.
+    /// Returns `None` for invalid matrices or a degenerate direction vector.
     pub fn from_camera_matrix(matrix: &Matrix4x4) -> Option<Self> {
         let origin = matrix.translation();
-        let forward = matrix.forward();
+        let forward = Vector3::new(
+            matrix.values[2][0],
+            matrix.values[2][1],
+            matrix.values[2][2],
+        );
         let magnitude = forward.magnitude();
         if ![
             origin.x, origin.y, origin.z, forward.x, forward.y, forward.z,

@@ -49,7 +49,9 @@ The native game boundary is the only owner of raw executable interaction. The EC
 
 ## Rhai callback contract
 
-Each package declares API version 1, capabilities, and callback names in `manifest.toml`. `game.post_sim` runs after a sampled game callback. `on_run` is a manually requested invocation through that same context. A callback receives one context and ignores its return value. Each loaded generation owns its state and limits. A callback error disables that generation; a failed replacement leaves the prior generation active.
+Each package declares API version 1, capabilities, and callback names in `manifest.toml`. Packages may also declare a semantic version, a bounded ordered list of source files, typed package/host-API requirements, conflicts, and workbench tab metadata. The loader resolves and compiles required local dependencies off-thread, then the manager validates and activates the graph at a callback boundary. Dependency declarations do not grant capabilities. The native workbench combines its built-in Spawn tab with copied, generation-owned script panels; rendering does not run Rhai or access package files.
+
+`game.post_sim` runs after a sampled game callback. `on_run` is a manually requested invocation through that same context. A callback receives one context and ignores its return value. Each loaded generation owns its state and limits. A callback error disables that generation; a failed replacement leaves the prior generation active.
 
 Callback execution validates requested capabilities and values, enforces Rhai engine limits, and bounds logs and effect budgets. The exact signatures and outward behavior are defined in [Rhai API v1](rhai-api.md), generated from the runtime catalog.
 

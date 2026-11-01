@@ -9,13 +9,23 @@
 //! [`event_channel`](crate::api::scripts::event_channel). Package files are
 //! described in the [scripting guide](https://github.com/Leslieghf/MM-Building-System/blob/main/docs/scripting.md).
 pub mod auto_reload;
+pub(crate) mod camera_override;
 pub mod console;
 pub mod engine;
 pub mod loader;
 pub mod manager;
 pub mod package;
+mod package_graph;
+pub(crate) mod spawn_catalog;
+mod ui;
 
 pub use crate::api::rhai::API_VERSION;
+pub use ui::{
+    MAX_PANEL_OPTIONS, MAX_PANEL_TEXT_BYTES, MAX_PANELS_PER_SCRIPT, MAX_WIDGETS_PER_PANEL,
+    PANEL_EVENT_QUEUE_CAPACITY, PANEL_PUBLICATION_QUEUE_CAPACITY, ScriptPanelEvent,
+    ScriptPanelModel, ScriptPanelPublication, ScriptPanelValue, ScriptPanelWidget,
+    ScriptPanelWidgetKind, ScriptStatusLevel,
+};
 /// Maximum encoded length of a validated package identifier.
 pub const MAX_SCRIPT_ID_BYTES: usize = 64;
 /// Capacity of the bounded script-event channel.
@@ -70,6 +80,12 @@ impl ScriptId {
     /// Return the canonical identifier text.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl std::fmt::Display for ScriptId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
     }
 }
 /// Monotonic, host-local generation number assigned when a package activates.
@@ -161,7 +177,7 @@ pub struct ScriptEvent {
 }
 
 /// Named native query configuration accepted by the Rhai raycast API.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScriptRaycastFilter {
     /// Mapped static-only filter with its known category mask.
     StaticOnly,
@@ -210,7 +226,16 @@ pub struct ScriptRaycastCompletion {
 pub struct ScriptEventSink(pub console::ConsoleEventSink);
 impl ScriptEventSink {
     /// Bound and publish an event to the console event channel.
-    pub fn emit(&self, mut event: ScriptEvent) {
+    pub fn emit(&self, event: ScriptEvent) {
+        self.emit_with_source_module(event, None);
+    }
+
+    /// Publish a host-generated event with its Rust producer module.
+    pub(crate) fn emit_from_rust_module(&self, event: ScriptEvent, module: &str) {
+        self.emit_with_source_module(event, Some(module));
+    }
+
+    fn emit_with_source_module(&self, mut event: ScriptEvent, module: Option<&str>) {
         event.text = bounded_text(&event.text, MAX_EVENT_BYTES);
         event.callback = bounded_text(&event.callback, MAX_SCRIPT_ID_BYTES);
         let source_position = if event.line.is_some() || event.column.is_some() {
@@ -235,6 +260,7 @@ impl ScriptEventSink {
                 .reload_error
                 .map(|text| bounded_text(&text, MAX_EVENT_BYTES)),
             phase: Some(event.phase),
+            source_module: module.map(str::to_owned),
             source_position,
             text: event.text,
         });

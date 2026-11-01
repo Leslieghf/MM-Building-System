@@ -46,6 +46,32 @@ impl GameRuntime {
         pending: PendingSpawnIntent,
         outcome: SpawnOutcome,
     ) {
+        if let Some(origin) = pending.origin.clone() {
+            self.app
+                .world()
+                .resource::<crate::api::scripts::manager::ScriptManager>()
+                .report_spawn_result(
+                    origin,
+                    pending.catalog_id.as_deref(),
+                    outcome.request_id,
+                    outcome.native_spawn_id,
+                    outcome.result,
+                    module_path!(),
+                );
+        }
+        if outcome.result == SpawnRequestResult::NativeCallSubmitted
+            && let Some(native_id) = outcome.native_spawn_id
+        {
+            self.owned_spawns.insert(
+                pending.request_id,
+                TrackedSpawn {
+                    native_id,
+                    lifecycle: SpawnLifecycle::PendingObservation,
+                    catalog_id: pending.catalog_id.clone(),
+                    origin: pending.origin.clone(),
+                },
+            );
+        }
         let world = self.app.world_mut();
         let mut query = world.query_filtered::<(Entity, &SpawnRequestId), With<SpawnTransform>>();
         if let Some((entity, _)) = query.iter(world).find(|(_, id)| id.0 == pending.request_id) {
@@ -56,22 +82,154 @@ impl GameRuntime {
             .last_spawn_outcome = Some(outcome);
     }
 
+    pub(crate) fn complete_spawn_removal(
+        &mut self,
+        pending: PendingSpawnRemoval,
+        outcome: SpawnOutcome,
+    ) {
+        if outcome.result != SpawnRequestResult::DespawnCallSubmitted
+            && let Some(record) = self.owned_spawns.get_mut(&pending.request_id)
+        {
+            record.lifecycle = SpawnLifecycle::Spawned;
+        }
+        self.app
+            .world_mut()
+            .resource_mut::<RuntimeDiagnostics>()
+            .last_spawn_outcome = Some(outcome);
+    }
+
+    pub(super) fn apply_spawn_observations(
+        &mut self,
+        observations: crate::api::ecs::SpawnSystemFrameObservations,
+    ) {
+        let mut observed: Vec<(
+            String,
+            u64,
+            crate::api::game::abi::types::HashId,
+            Option<crate::api::scripts::ScriptEvent>,
+            SpawnRequestResult,
+        )> = Vec::new();
+        let spawned_count = usize::from(observations.spawned_count).min(observations.spawned.len());
+        let spawned = &observations.spawned[..spawned_count];
+        for id in spawned {
+            if let Some((request_id, record)) = self
+                .owned_spawns
+                .iter_mut()
+                .find(|(_, record)| record.native_id.raw() == *id)
+                && record.lifecycle == SpawnLifecycle::PendingObservation
+            {
+                record.lifecycle = SpawnLifecycle::Spawned;
+                if let Some(catalog_id) = record.catalog_id.clone() {
+                    observed.push((
+                        catalog_id,
+                        *request_id,
+                        record.native_id,
+                        record.origin.clone(),
+                        SpawnRequestResult::SpawnObserved,
+                    ));
+                }
+            }
+        }
+        let failed_count = usize::from(observations.failed_count).min(observations.failed.len());
+        for id in &observations.failed[..failed_count] {
+            if let Some((request_id, record)) = self
+                .owned_spawns
+                .iter()
+                .find(|(_, record)| record.native_id.raw() == *id)
+            {
+                if let Some(catalog_id) = record.catalog_id.clone() {
+                    observed.push((
+                        catalog_id,
+                        *request_id,
+                        record.native_id,
+                        record.origin.clone(),
+                        SpawnRequestResult::SpawnFailedObserved,
+                    ));
+                }
+            }
+            self.owned_spawns
+                .retain(|_, record| record.native_id.raw() != *id);
+        }
+        let despawned_count =
+            usize::from(observations.despawned_count).min(observations.despawned.len());
+        for id in &observations.despawned[..despawned_count] {
+            self.owned_spawns
+                .retain(|_, record| record.native_id.raw() != *id);
+        }
+        let scripts = self
+            .app
+            .world()
+            .resource::<crate::api::scripts::manager::ScriptManager>();
+        for (catalog_id, request_id, native_id, origin, result) in observed {
+            if let Some(origin) = origin {
+                scripts.report_spawn_result(
+                    origin,
+                    Some(&catalog_id),
+                    request_id,
+                    Some(native_id),
+                    result,
+                    module_path!(),
+                );
+            }
+        }
+    }
+
+    pub(super) fn take_next_spawn_removal(&mut self) -> Option<PendingSpawnRemoval> {
+        while let Some(request_id) = self.pending_spawn_removals.pop_front() {
+            let Some(record) = self.owned_spawns.get(&request_id) else {
+                continue;
+            };
+            if record.lifecycle == SpawnLifecycle::DespawnRequested {
+                return Some(PendingSpawnRemoval {
+                    request_id,
+                    native_id: record.native_id,
+                });
+            }
+        }
+        None
+    }
+
+    pub(super) fn owned_spawn_views(&self) -> [Option<OwnedSpawnView>; 16] {
+        let mut views = [None; 16];
+        for (slot, (request_id, record)) in self.owned_spawns.iter().take(16).enumerate() {
+            views[slot] = Some(OwnedSpawnView {
+                request_id: *request_id,
+                native_spawn_id: record.native_id,
+                lifecycle: record.lifecycle,
+            });
+        }
+        views
+    }
+
     pub(super) fn take_next_spawn_intent(&mut self) -> Option<PendingSpawnIntent> {
         let world = self.app.world_mut();
         let candidate = {
-            let mut query = world.query_filtered::<
-                (&SpawnRequestId, &SpawnAssetKey, &SpawnTransform),
-                With<SpawnLifecycle>,
-            >();
-            query
-                .iter(world)
-                .min_by_key(|(id, _, _)| id.0)
-                .map(|(id, key, transform)| (id.0, key.as_str().to_owned(), transform.matrix))
+            let mut query = world.query_filtered::<(
+                Entity,
+                &SpawnRequestId,
+                &SpawnAssetKey,
+                &SpawnTransform,
+                Option<&crate::api::ecs::systems::script_dispatch::ScriptSpawnOrigin>,
+            ), With<SpawnLifecycle>>();
+            query.iter(world).min_by_key(|(_, id, _, _, _)| id.0).map(
+                |(entity, id, key, transform, origin)| {
+                    (
+                        entity,
+                        id.0,
+                        key.as_str().to_owned(),
+                        transform.matrix,
+                        origin.map(|origin| origin.0.clone()),
+                        origin.map(|origin| origin.1.clone()),
+                    )
+                },
+            )
         }?;
         Some(PendingSpawnIntent {
-            request_id: candidate.0,
-            asset_key: candidate.1,
-            matrix: candidate.2,
+            request_id: candidate.1,
+            catalog_id: candidate.5,
+            asset_key: candidate.2,
+            matrix: candidate.3,
+            origin: candidate.4,
         })
     }
 
@@ -90,7 +248,7 @@ impl GameRuntime {
             self.app
                 .world()
                 .resource::<crate::api::scripts::manager::ScriptManager>()
-                .report_velocity_result(origin.0, pending.intent_id, result);
+                .report_velocity_result(origin.0, pending.intent_id, result, module_path!());
         }
         self.app.world_mut().entity_mut(pending.entity).despawn();
         let outcome = IntentOutcome {

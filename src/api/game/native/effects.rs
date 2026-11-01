@@ -60,10 +60,16 @@ pub(in crate::api::game::native) fn apply_spawn_intent(
             pending.request_id,
             SpawnRequestResult::CallbackNotExclusive,
             None,
+            None,
         );
     }
     let Ok(asset_key) = CString::new(format!("{}.ee", pending.asset_key)) else {
-        return spawn_outcome(pending.request_id, SpawnRequestResult::InvalidRequest, None);
+        return spawn_outcome(
+            pending.request_id,
+            SpawnRequestResult::InvalidRequest,
+            None,
+            None,
+        );
     };
     if !pending
         .matrix
@@ -73,12 +79,10 @@ pub(in crate::api::game::native) fn apply_spawn_intent(
         .all(|value| value.is_finite())
         || pending.request_id == 0
     {
-        return spawn_outcome(pending.request_id, SpawnRequestResult::InvalidRequest, None);
-    }
-    if pending.request_id > u64::from(u32::MAX) {
         return spawn_outcome(
             pending.request_id,
-            SpawnRequestResult::SpawnIdUnavailable,
+            SpawnRequestResult::InvalidRequest,
+            None,
             None,
         );
     }
@@ -94,6 +98,7 @@ pub(in crate::api::game::native) fn apply_spawn_intent(
         return spawn_outcome(
             pending.request_id,
             SpawnRequestResult::NativeSymbolUnavailable,
+            None,
             None,
         );
     }
@@ -115,11 +120,26 @@ fn submit_spawn_native(pending: &PendingSpawnIntent, asset_key: &CString) -> Spa
     };
     unsafe { set_entity_file(info, asset_key.as_ptr()) };
 
+    // The SDK allocator's reference-return ABI is not yet validated in this
+    // build. Keep the previously working request-derived ID path until it is.
+    let Ok(spawn_id) = u32::try_from(pending.request_id) else {
+        return spawn_outcome(
+            pending.request_id,
+            SpawnRequestResult::SpawnIdUnavailable,
+            None,
+            None,
+        );
+    };
+    if spawn_id == 0 {
+        return spawn_outcome(
+            pending.request_id,
+            SpawnRequestResult::SpawnIdUnavailable,
+            None,
+            None,
+        );
+    }
+
     let raw_info = info.cast::<u8>();
-    // This first experiment uses a request-derived nonzero scalar ID because
-    // the SDK's CHashString reference-returning allocator has an unverified
-    // Rust ABI. It is unique within this process until the u32 range is spent.
-    let spawn_id = (pending.request_id as u32).max(1);
     unsafe {
         ptr::write_unaligned(raw_info.add(SPAWN_INFO_ID_OFFSET).cast::<u32>(), spawn_id);
         ptr::write_unaligned(
@@ -141,6 +161,40 @@ fn submit_spawn_native(pending: &PendingSpawnIntent, asset_key: &CString) -> Spa
         pending.request_id,
         SpawnRequestResult::NativeCallSubmitted,
         Some(native_return),
+        Some(crate::api::game::abi::types::HashId::from_sdk_raw(spawn_id)),
+    )
+}
+
+pub(in crate::api::game::native) fn apply_spawn_removal_intent(
+    pending: PendingSpawnRemoval,
+    overlap_epoch: u64,
+) -> SpawnOutcome {
+    if CALLBACK_IN_FLIGHT.load(Ordering::Acquire) != 1
+        || CALLBACK_OVERLAP_EPOCH.load(Ordering::Acquire) != overlap_epoch
+    {
+        return spawn_outcome(
+            pending.request_id,
+            SpawnRequestResult::CallbackNotExclusive,
+            None,
+            Some(pending.native_id),
+        );
+    }
+    if pending.native_id.raw() == 0 || !is_readable_executable_page(SPAWN_DESPAWN) {
+        return spawn_outcome(
+            pending.request_id,
+            SpawnRequestResult::DespawnUnavailable,
+            None,
+            Some(pending.native_id),
+        );
+    }
+
+    let despawn: SpawnDespawnFn = unsafe { std::mem::transmute(SPAWN_DESPAWN) };
+    unsafe { despawn(&pending.native_id) };
+    spawn_outcome(
+        pending.request_id,
+        SpawnRequestResult::DespawnCallSubmitted,
+        None,
+        Some(pending.native_id),
     )
 }
 
@@ -148,10 +202,12 @@ fn spawn_outcome(
     request_id: u64,
     result: SpawnRequestResult,
     native_return: Option<usize>,
+    native_spawn_id: Option<crate::api::game::abi::types::HashId>,
 ) -> SpawnOutcome {
     SpawnOutcome {
         request_id,
         result,
         native_return,
+        native_spawn_id,
     }
 }

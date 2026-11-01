@@ -1,0 +1,6 @@
+id = "spawn_placement_lab"
+api_version = 1
+capabilities = ["game.read", "game.raycast", "game.spawn", "ui.panels"]
+
+[callbacks]
+"game.post_sim" = "on_post_sim"

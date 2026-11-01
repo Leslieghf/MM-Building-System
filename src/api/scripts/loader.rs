@@ -447,7 +447,7 @@ impl WorkerWatches {
             // Only readable packages establish a silent baseline. Initial missing
             // or unreadable files must pass through normal debounce and notify.
             let snapshot = package_snapshot(root, &id);
-            let readable = snapshot.manifest.is_some() && snapshot.main.is_some();
+            let readable = snapshot.manifest.is_some() && snapshot.has_all_sources();
             if readable {
                 self.tracker.observe(&id, snapshot.fingerprint.clone());
                 self.tracker.observe(&id, snapshot.fingerprint);
@@ -527,20 +527,37 @@ impl WorkerWatches {
 }
 
 fn package_snapshot(root: &Path, id: &ScriptId) -> super::auto_reload::AutoReloadSnapshot {
-    let contents = root.canonicalize().ok().and_then(|root| {
-        let package = confined(&root, &root.join(id.as_str())).ok()?;
-        Some((
-            read_bounded_bytes(&root, &package.join("manifest.toml"), MAX_MANIFEST_BYTES).ok(),
-            read_bounded_bytes(
-                &root,
-                &package.join("main.rhai"),
-                super::engine::MAX_SOURCE_BYTES,
-            )
-            .ok(),
-        ))
-    });
-    let (manifest, main) = contents.unwrap_or_default();
-    super::auto_reload::AutoReloadSnapshot::new(manifest, main)
+    let (manifest, sources) = root
+        .canonicalize()
+        .ok()
+        .and_then(|root| {
+            let package = confined(&root, &root.join(id.as_str())).ok()?;
+            let manifest_bytes =
+                read_bounded_bytes(&root, &package.join("manifest.toml"), MAX_MANIFEST_BYTES).ok();
+            let manifest = manifest_bytes.as_deref().and_then(|bytes| {
+                std::str::from_utf8(bytes)
+                    .ok()
+                    .and_then(|text| toml::from_str::<ScriptManifest>(text).ok())
+            });
+            let source_paths = manifest
+                .as_ref()
+                .filter(|manifest| manifest.validate(id).is_ok())
+                .map(|manifest| manifest.sources.clone())
+                .unwrap_or_else(|| vec!["main.rhai".to_owned()]);
+            let mut sources = BTreeMap::new();
+            for path in source_paths {
+                let bytes = read_bounded_bytes(
+                    &root,
+                    &package.join(&path),
+                    super::engine::MAX_SOURCE_BYTES,
+                )
+                .ok();
+                sources.insert(path, bytes);
+            }
+            Some((manifest_bytes, sources))
+        })
+        .unwrap_or_default();
+    super::auto_reload::AutoReloadSnapshot::new(manifest, sources)
 }
 
 fn confined(root: &Path, path: &Path) -> Result<PathBuf, String> {
@@ -579,6 +596,80 @@ fn prepare(
     request: &LoadScriptRequest,
     factory: RhaiEngineFactory,
 ) -> Result<PreparedScript, String> {
+    let mut requested = prepare_single(root, request, factory)?;
+    let mut manifests = BTreeMap::from([(request.id.clone(), requested.manifest().clone())]);
+    collect_required_manifests(root, &request.id, &mut manifests)?;
+    let order = super::package_graph::resolve_order(&request.id, &manifests)?;
+    let mut dependencies = Vec::with_capacity(order.len().saturating_sub(1));
+    for id in order {
+        if id == request.id {
+            continue;
+        }
+        let manifest = manifests
+            .get(&id)
+            .expect("resolved dependency has a manifest")
+            .clone();
+        let package = confined(root, &root.join(id.as_str()))?;
+        let sources = read_declared_sources(root, &package, &manifest)?;
+        let prepared = PreparedScript::compile_package_sources(
+            request.request_id,
+            id,
+            manifest,
+            &sources,
+            false,
+            factory,
+        )?;
+        dependencies.push(prepared.into_dependency());
+    }
+    requested.set_dependencies(dependencies);
+    Ok(requested)
+}
+
+fn collect_required_manifests(
+    root: &Path,
+    id: &ScriptId,
+    manifests: &mut BTreeMap<ScriptId, ScriptManifest>,
+) -> Result<(), String> {
+    let manifest = manifests
+        .get(id)
+        .expect("requested manifest was prepared")
+        .clone();
+    for requirement in &manifest.requires {
+        if requirement.kind != super::package::PackageRequirementKind::Package
+            || requirement.optional
+        {
+            continue;
+        }
+        let dependency = ScriptId::parse(requirement.id.clone())
+            .map_err(|_| format!("package {id} has an invalid dependency ID"))?;
+        if manifests.contains_key(&dependency) {
+            continue;
+        }
+        let package = confined(root, &root.join(dependency.as_str()))
+            .map_err(|_| format!("package {id} requires missing package {dependency}"))?;
+        if !package.is_dir() {
+            return Err(format!(
+                "package {id} requires missing package {dependency}"
+            ));
+        }
+        let text = read_bounded(root, &package.join("manifest.toml"), MAX_MANIFEST_BYTES)
+            .map_err(|error| format!("dependency {dependency} manifest: {error}"))?;
+        let dependency_manifest: ScriptManifest = toml::from_str(&text)
+            .map_err(|error| format!("dependency {dependency} manifest: {error}"))?;
+        dependency_manifest
+            .validate(&dependency)
+            .map_err(|error| format!("dependency {dependency}: {error}"))?;
+        manifests.insert(dependency.clone(), dependency_manifest);
+        collect_required_manifests(root, &dependency, manifests)?;
+    }
+    Ok(())
+}
+
+fn prepare_single(
+    root: &Path,
+    request: &LoadScriptRequest,
+    factory: RhaiEngineFactory,
+) -> Result<PreparedScript, String> {
     if let Some(snapshot) = &request.snapshot {
         return prepare_snapshot(request, snapshot, factory);
     }
@@ -591,16 +682,13 @@ fn prepare(
     let manifest = read_bounded(&root, &package.join("manifest.toml"), MAX_MANIFEST_BYTES)?;
     let manifest: ScriptManifest =
         toml::from_str(&manifest).map_err(|e| bounded_text(&e.to_string(), MAX_EVENT_BYTES))?;
-    let source = read_bounded(
-        &root,
-        &package.join("main.rhai"),
-        super::engine::MAX_SOURCE_BYTES,
-    )?;
-    PreparedScript::compile_package(
+    manifest.validate(&request.id)?;
+    let sources = read_declared_sources(&root, &package, &manifest)?;
+    PreparedScript::compile_package_sources(
         request.request_id,
         request.id.clone(),
         manifest,
-        &source,
+        &sources,
         request.replace,
         factory,
     )
@@ -613,7 +701,7 @@ fn prepare_snapshot(
 ) -> Result<PreparedScript, String> {
     if !snapshot
         .fingerprint
-        .matches_contents(snapshot.manifest.as_deref(), snapshot.main.as_deref())
+        .matches_contents(snapshot.manifest.as_deref(), &snapshot.sources)
     {
         return Err("stable package snapshot fingerprint mismatch".into());
     }
@@ -625,20 +713,49 @@ fn prepare_snapshot(
         std::str::from_utf8(manifest).map_err(|_| "package must contain UTF-8 text".to_owned())?;
     let manifest: ScriptManifest =
         toml::from_str(manifest).map_err(|e| bounded_text(&e.to_string(), MAX_EVENT_BYTES))?;
-    let source = snapshot
-        .main
-        .as_deref()
-        .ok_or_else(|| "stable package snapshot has no readable main.rhai".to_owned())?;
-    let source =
-        std::str::from_utf8(source).map_err(|_| "package must contain UTF-8 text".to_owned())?;
-    PreparedScript::compile_package(
+    manifest.validate(&request.id)?;
+    if snapshot.sources.len() != manifest.sources.len() {
+        return Err("stable package snapshot source list mismatch".into());
+    }
+    let mut sources = Vec::with_capacity(manifest.sources.len());
+    for path in &manifest.sources {
+        let bytes = snapshot
+            .sources
+            .get(path)
+            .and_then(Option::as_deref)
+            .ok_or_else(|| format!("stable package snapshot has no readable {path}"))?;
+        let contents = std::str::from_utf8(bytes)
+            .map_err(|_| format!("{path}: package source must be UTF-8 text"))?;
+        sources.push(super::package::PackageSource {
+            path: path.clone(),
+            contents: contents.to_owned(),
+        });
+    }
+    PreparedScript::compile_package_sources(
         request.request_id,
         request.id.clone(),
         manifest,
-        source,
+        &sources,
         request.replace,
         factory,
     )
+}
+
+fn read_declared_sources(
+    root: &Path,
+    package: &Path,
+    manifest: &ScriptManifest,
+) -> Result<Vec<super::package::PackageSource>, String> {
+    let mut sources = Vec::with_capacity(manifest.sources.len());
+    for path in &manifest.sources {
+        let contents = read_bounded(root, &package.join(path), super::engine::MAX_SOURCE_BYTES)
+            .map_err(|error| format!("{path}: {error}"))?;
+        sources.push(super::package::PackageSource {
+            path: path.clone(),
+            contents,
+        });
+    }
+    Ok(sources)
 }
 
 #[cfg(windows)]
@@ -926,7 +1043,14 @@ mod tests {
             watches.poll(&root.0, &tx);
             let accepted = rx.try_recv().unwrap();
             assert_eq!(
-                accepted.request.snapshot.as_ref().unwrap().main.as_deref(),
+                accepted
+                    .request
+                    .snapshot
+                    .as_ref()
+                    .unwrap()
+                    .sources
+                    .get("main.rhai")
+                    .and_then(Option::as_deref),
                 Some(b"fn on_post_sim(ctx) { let accepted = true; }".as_slice())
             );
 
@@ -939,7 +1063,14 @@ mod tests {
             watches.poll(&root.0, &tx);
             let later = rx.try_recv().expect("later complete content must debounce");
             assert_eq!(
-                later.request.snapshot.as_ref().unwrap().main.as_deref(),
+                later
+                    .request
+                    .snapshot
+                    .as_ref()
+                    .unwrap()
+                    .sources
+                    .get("main.rhai")
+                    .and_then(Option::as_deref),
                 Some(later_source.as_bytes())
             );
             assert_eq!(

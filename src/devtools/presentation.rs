@@ -36,10 +36,12 @@ pub fn create_ui_app() -> App {
     );
     app.init_resource::<UiGameSnapshot>();
     app.init_resource::<crate::api::ecs::input::InputFrame>();
+    app.init_resource::<PendingUiInput>();
     app.init_resource::<UiPreferences>();
     app.init_resource::<UiPresentation>();
+    app.init_resource::<OverlayFrameTimings>();
+    app.init_resource::<crate::devtools::state::ScriptPanelsUiState>();
     app.init_resource::<RuntimeDiagnostics>();
-    app.init_resource::<SpawnTestUiState>();
     app.init_resource::<ConsoleOutput>();
     app.init_resource::<ScriptConsoleUiState>();
     app.add_systems(
@@ -67,7 +69,6 @@ fn prepare_presentation(
     rows.reserve(31);
     append_player_rows(&data, rows);
     append_camera_rows(&data, rows);
-    append_reticle_query_rows(&data, rows);
     append_vehicle_rows(&data, rows);
     append_runtime_rows(&data, &diagnostics, rows);
 }
@@ -100,14 +101,6 @@ fn append_camera_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
         DebugSection::Camera,
         "Rotation (view)",
         format_angles(data.view_rotation),
-    ));
-}
-
-fn append_reticle_query_rows(data: &GameSnapshot, rows: &mut Vec<PresentationRow>) {
-    rows.push(row(
-        DebugSection::Raycast,
-        "Hit position",
-        format_vector(data.raycast_hit_position),
     ));
 }
 
@@ -176,12 +169,16 @@ fn append_runtime_rows(
         ));
     }
     if let Some(outcome) = data.last_spawn_outcome.or(diagnostics.last_spawn_outcome) {
+        let native_id = outcome
+            .native_spawn_id
+            .map(|id| format!(" | native {:08X}", id.raw()))
+            .unwrap_or_default();
         rows.push(row(
             DebugSection::Runtime,
             "Last spawn request",
             format!(
-                "{}: {:?} ({:?})",
-                outcome.request_id, outcome.result, outcome.native_return
+                "{}: {:?} ({:?}){}",
+                outcome.request_id, outcome.result, outcome.native_return, native_id
             ),
         ));
     }
@@ -192,25 +189,5 @@ fn row(section: DebugSection, label: &'static str, value: String) -> Presentatio
         section,
         label,
         value,
-    }
-}
-
-#[cfg(test)]
-mod raycast_filter_comparison_tests {
-    use super::*;
-
-    #[test]
-    fn raycast_section_displays_only_the_latest_hit_position() {
-        let snapshot = GameSnapshot {
-            raycast_hit_position: Some([4.0, 5.0, 6.0]),
-            ..GameSnapshot::default()
-        };
-        let mut rows = Vec::new();
-
-        append_reticle_query_rows(&snapshot, &mut rows);
-
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].label, "Hit position");
-        assert_eq!(rows[0].value, "4.000, 5.000, 6.000");
     }
 }

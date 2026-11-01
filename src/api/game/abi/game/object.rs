@@ -9,10 +9,10 @@ use crate::api::game::abi::types::Matrix4x4;
 /// Opaque `CGameObject`; its SDK layout contains engine and Boost-owned state.
 pub enum GameObject {}
 
-/// Vtable slot candidate currently used by the game adapter for `GetTransform`.
-/// The SDK header gives declaration order, not a numeric slot; this is not
-/// independently validated against the supported executable.
-pub const GET_TRANSFORM_SLOT_CANDIDATE: usize = 22;
+/// Runtime-verified vtable slot for `CGameObject::GetTransform` on the
+/// supported executable. The base implementation returns `false`; transform-
+/// providing derived classes override this slot.
+pub const GET_TRANSFORM_SLOT: usize = 22;
 
 /// Pointer-free `SObjectIDData` / `SObjectID` value.
 #[repr(C)]

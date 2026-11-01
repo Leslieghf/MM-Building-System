@@ -27,11 +27,14 @@ impl GameRuntime {
             return;
         }
         self.console_requests_disconnected = true;
-        self.endpoint.console_events.emit(ConsoleEvent::new(
-            None,
-            ConsoleSeverity::Warning,
-            "UI console request channel disconnected",
-        ));
+        self.endpoint.console_events.emit(
+            ConsoleEvent::new(
+                None,
+                ConsoleSeverity::Warning,
+                "UI console request channel disconnected",
+            )
+            .from_rust_module(module_path!()),
+        );
     }
 
     fn process_console_request(&mut self, request: ConsoleRequest) {

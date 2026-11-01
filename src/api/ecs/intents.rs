@@ -151,6 +151,34 @@ pub enum SpawnLifecycle {
     Failed,
 }
 
+/// Pointer-free row for one spawn owned by this mod runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnedSpawnView {
+    /// Host-local request used to route a removal request back to the runtime.
+    pub request_id: u64,
+    /// Native game-generated spawn identity.
+    pub native_spawn_id: crate::api::game::abi::types::HashId,
+    /// Last observed game-owned lifecycle state.
+    pub lifecycle: SpawnLifecycle,
+}
+
+/// Copy of the spawn handler's three per-frame ID lists.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpawnSystemFrameObservations {
+    /// IDs the game reported as spawned this frame.
+    pub spawned: [u32; 32],
+    /// Number of valid entries in `spawned`.
+    pub spawned_count: u8,
+    /// IDs the game reported as despawned this frame.
+    pub despawned: [u32; 32],
+    /// Number of valid entries in `despawned`.
+    pub despawned_count: u8,
+    /// IDs the game reported as failed this frame.
+    pub failed: [u32; 32],
+    /// Number of valid entries in `failed`.
+    pub failed_count: u8,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Reason a spawn request could not be constructed or queued.
 pub enum SpawnRequestError {
@@ -175,6 +203,16 @@ pub enum SpawnRequestResult {
     InvalidRequest,
     /// The native call was submitted; spawned state still needs observation.
     NativeCallSubmitted,
+    /// A later frame listed this native ID as spawned.
+    SpawnObserved,
+    /// A later frame listed this native ID as failed.
+    SpawnFailedObserved,
+    /// The game-owned despawn call was submitted; removal still needs observation.
+    DespawnCallSubmitted,
+    /// The target has not appeared in the handler's spawned list.
+    SpawnNotObserved,
+    /// The owned spawn ID is unavailable or the native despawn function is missing.
+    DespawnUnavailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,6 +224,8 @@ pub struct SpawnOutcome {
     pub result: SpawnRequestResult,
     /// Native return value, when a call was made.
     pub native_return: Option<usize>,
+    /// Native-generated game spawn identity, distinct from `request_id`.
+    pub native_spawn_id: Option<crate::api::game::abi::types::HashId>,
 }
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]

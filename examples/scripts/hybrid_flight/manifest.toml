@@ -1,0 +1,6 @@
+id = "hybrid_flight"
+api_version = 1
+capabilities = ["game.read", "game.vehicle.write", "input.read", "ui.panels"]
+
+[callbacks]
+"game.post_sim" = "on_post_sim"

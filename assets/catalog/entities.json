@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "game_build": "Steam 1.0.3.0",
+  "entries": [
+    {
+      "id": "props.scrap_stockpile_small",
+      "name": "Scrap Stockpile",
+      "category": [
+        "Props",
+        "Resources"
+      ],
+      "asset_key": "editor/entities/a00/propsenc/expentity/a00_propsenc_projects_stockpile_small_01",
+      "kind": "prop",
+      "motion": "unknown",
+      "evidence": "spawn_observed",
+      "spawn_readiness": "verified",
+      "sources": [
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "in_game_user_observation",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "Existing spawn path has been visually confirmed. Bundle contains one CRigidObject with Havok collision resources and authored graph/fade behavior; exact rigid-body motion mode is not decoded."
+    },
+    {
+      "id": "encounters.roadside.static_wreck_0002",
+      "name": "Roadside Wreck 0002",
+      "category": [
+        "World Compositions",
+        "Roadside"
+      ],
+      "asset_key": "editor/entities/a01/encounters/exported/road_side/a01_static_wreck_0002",
+      "kind": "encounter",
+      "motion": "unknown",
+      "evidence": "archive_found",
+      "spawn_readiness": "blocked",
+      "sources": [
+        "gigaHours/MadMaxSpawner: all_entity",
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "The exact .ee package exists locally and its embedded .epe was structurally parsed. Do not infer standalone prop behavior from the filename."
+    },
+    {
+      "id": "encounters.roadside.static_wreck_0001_night",
+      "name": "Roadside Wreck 0001 (Night)",
+      "category": [
+        "World Compositions",
+        "Roadside"
+      ],
+      "asset_key": "editor/entities/a01/encounters/exported/road_side/a01_static_wreck_0001_night",
+      "kind": "encounter",
+      "motion": "unknown",
+      "evidence": "archive_found",
+      "spawn_readiness": "blocked",
+      "sources": [
+        "gigaHours/MadMaxSpawner: all_entity",
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "The exact .ee package exists locally and its embedded .epe was structurally parsed. Runtime behavior and standalone spawn behavior remain unverified."
+    },
+    {
+      "id": "encounters.roadside.static_wreck_0006_birds",
+      "name": "Roadside Wreck with Birds",
+      "category": [
+        "World Compositions",
+        "Roadside"
+      ],
+      "asset_key": "editor/entities/a01/encounters/exported/road_side/a01_static_wreck_0006_birds",
+      "kind": "encounter",
+      "motion": "unknown",
+      "evidence": "definition_inspected",
+      "spawn_readiness": "blocked",
+      "sources": [
+        "gigaHours/MadMaxSpawner: all_entity",
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "Inspected bundle contains CRigidObject, CDestructibleObject, CShapeTrigger, CSkeletalAnimatedObject, interaction components, and multiple environment resources; not a simple one-prop asset."
+    },
+    {
+      "id": "props.loot.roadkill_lootbox",
+      "name": "Roadkill Lootbox",
+      "category": [
+        "World Compositions",
+        "Loot"
+      ],
+      "asset_key": "editor/entities/a01/encounters/exported/loot/a01_wasteland_lootbox_roadkill_normal",
+      "kind": "encounter",
+      "motion": "unknown",
+      "evidence": "definition_inspected",
+      "spawn_readiness": "blocked",
+      "sources": [
+        "gigaHours/MadMaxSpawner: all_entity",
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "Bundle includes CRigidObject, interaction/trigger components, sound, loot and opportunity-vision graph scripts. Treat as a gameplay composition."
+    },
+    {
+      "id": "props.projects.doghouse",
+      "name": "Doghouse Project",
+      "category": [
+        "World Compositions",
+        "Projects"
+      ],
+      "asset_key": "editor/entities/a00/propsenc/expentity/a00_propsenc_projects_doghouse_01",
+      "kind": "composition",
+      "motion": "unknown",
+      "evidence": "archive_found",
+      "spawn_readiness": "blocked",
+      "sources": [
+        "gigaHours/MadMaxSpawner: all_entity",
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "The exact .ee package exists locally and its embedded .epe was structurally parsed. Runtime behavior and standalone spawn behavior remain unverified."
+    },
+    {
+      "id": "props.projects.armory",
+      "name": "Armory Project",
+      "category": [
+        "World Compositions",
+        "Projects"
+      ],
+      "asset_key": "editor/entities/a00/propsenc/expentity/a00_propsenc_projects_armory_01",
+      "kind": "composition",
+      "motion": "unknown",
+      "evidence": "definition_inspected",
+      "spawn_readiness": "candidate",
+      "sources": [
+        "gigaHours/MadMaxSpawner: all_entity",
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "Inspected bundle has one CRigidObject and a collision resource, plus authored graph/fade behavior. Candidate only, not a neutral prop."
+    },
+    {
+      "id": "props.projects.cleanup_crew",
+      "name": "Cleanup Crew Project",
+      "category": [
+        "World Compositions",
+        "Projects"
+      ],
+      "asset_key": "editor/entities/a00/propsenc/expentity/a00_propsenc_projects_cleanup_crew_01",
+      "kind": "composition",
+      "motion": "unknown",
+      "evidence": "definition_inspected",
+      "spawn_readiness": "candidate",
+      "sources": [
+        "gigaHours/MadMaxSpawner: all_entity",
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "Inspected definition has one CRigidObject, collision resource and authored graph/fade behavior. Candidate only."
+    },
+    {
+      "id": "props.projects.super_fuel",
+      "name": "Super Fuel Project",
+      "category": [
+        "World Compositions",
+        "Projects"
+      ],
+      "asset_key": "editor/entities/a00/propsenc/expentity/a00_propsenc_projects_super_fuel_01",
+      "kind": "composition",
+      "motion": "unknown",
+      "evidence": "definition_inspected",
+      "spawn_readiness": "candidate",
+      "sources": [
+        "gigaHours/MadMaxSpawner: all_entity",
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "Inspected definition has one CRigidObject, collision resource and authored graph/fade behavior. Candidate only."
+    },
+    {
+      "id": "props.projects.maggot_farm",
+      "name": "Maggot Farm Project",
+      "category": [
+        "World Compositions",
+        "Projects"
+      ],
+      "asset_key": "editor/entities/a00/propsenc/expentity/a00_propsenc_projects_maggot_farm_01",
+      "kind": "composition",
+      "motion": "unknown",
+      "evidence": "definition_inspected",
+      "spawn_readiness": "blocked",
+      "sources": [
+        "gigaHours/MadMaxSpawner: all_entity",
+        "docs/research/static-prop-asset-candidates-2026-10-31.md",
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "Inspected definition adds a creation trigger, effect emitter and maggot behavior; poor first prop candidate."
+    },
+    {
+      "id": "vehicles.dlc.rockstar_atv",
+      "name": "Rockstar ATV",
+      "category": [
+        "Vehicles",
+        "DLC"
+      ],
+      "asset_key": "dlc/rockstar/editor/entities/a00/exported/a00_vehicle_empty_rockstaratv",
+      "kind": "vehicle",
+      "motion": "unknown",
+      "evidence": "archive_found",
+      "spawn_readiness": "candidate",
+      "sources": [
+        "docs/research/game-content-inventory-2026-11-01.md"
+      ],
+      "notes": "Local DLC package has one direct CCar root and references Rockstar ATV vehicle physics, engine, solver, and skeleton resources. Spawn behavior and runtime safety are unverified."
+    }
+  ]
+}

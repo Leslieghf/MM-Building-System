@@ -11,6 +11,7 @@ use crate::api::game::abi::types::Matrix4x4;
 use crate::api::scripts::console::{
     self, ConsoleEventReceiver, ConsoleEventSink, ConsoleRequest, ConsoleRequestSender,
 };
+use crate::api::scripts::{ScriptPanelEvent, ScriptPanelPublication};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 #[derive(Debug, Clone, Copy)]
@@ -31,6 +32,13 @@ pub struct SpawnIntentEnvelope {
     pub asset_key: String,
     /// Finite row-major placement transform.
     pub matrix: Matrix4x4,
+}
+
+/// Request to remove one positively observed mod-owned spawn.
+#[derive(Debug, Clone, Copy)]
+pub struct SpawnRemovalEnvelope {
+    /// Host-local ID of the spawn request; native IDs remain runtime-owned.
+    pub request_id: u64,
 }
 
 /// Receivers and publishers owned by game-callback orchestration.
@@ -57,8 +65,14 @@ pub struct GameEndpoint {
     pub outcome_tx: SyncSender<IntentOutcome>,
     /// Receiver for bounded spawn requests.
     pub spawn_rx: Receiver<SpawnIntentEnvelope>,
+    /// Requests to despawn owned instances at the game callback boundary.
+    pub spawn_removal_rx: Receiver<SpawnRemovalEnvelope>,
     /// Non-blocking input mailbox shared with render presentation.
     pub input_mailbox: crate::api::ecs::input::InputFrameMailbox,
+    /// Bounded publisher of complete script-panel snapshots to the render world.
+    pub script_panels_tx: SyncSender<Vec<ScriptPanelPublication>>,
+    /// Receiver for copied widget events from the render world.
+    pub script_panel_events_rx: Receiver<ScriptPanelEvent>,
 }
 
 /// Receivers and publishers owned by render/UI presentation.
@@ -82,8 +96,14 @@ pub struct UiEndpoint {
     pub outcome_rx: Receiver<IntentOutcome>,
     /// Sender for bounded spawn requests.
     pub spawn_tx: SyncSender<SpawnIntentEnvelope>,
+    /// Requests to remove a runtime-owned spawn by host request correlation.
+    pub spawn_removal_tx: SyncSender<SpawnRemovalEnvelope>,
     /// Non-blocking input mailbox shared with game callbacks.
     pub input_mailbox: crate::api::ecs::input::InputFrameMailbox,
+    /// Receiver for the newest complete script-panel snapshot.
+    pub script_panels_rx: Receiver<Vec<ScriptPanelPublication>>,
+    /// Bounded publisher for copied widget events.
+    pub script_panel_events_tx: SyncSender<ScriptPanelEvent>,
 }
 
 /// Create paired game and UI endpoints with the configured bounded channels.
@@ -100,6 +120,11 @@ pub fn create_endpoints() -> (GameEndpoint, UiEndpoint) {
     let (intent_tx, intent_rx) = sync_channel(INTENT_QUEUE_CAPACITY);
     let (outcome_tx, outcome_rx) = sync_channel(OUTCOME_QUEUE_CAPACITY);
     let (spawn_tx, spawn_rx) = sync_channel(SPAWN_INTENT_QUEUE_CAPACITY);
+    let (spawn_removal_tx, spawn_removal_rx) = sync_channel(SPAWN_INTENT_QUEUE_CAPACITY);
+    let (script_panels_tx, script_panels_rx) =
+        sync_channel(crate::api::scripts::PANEL_PUBLICATION_QUEUE_CAPACITY);
+    let (script_panel_events_tx, script_panel_events_rx) =
+        sync_channel(crate::api::scripts::PANEL_EVENT_QUEUE_CAPACITY);
     let input_mailbox = crate::api::ecs::input::InputFrameMailbox::default();
     let script_loader = crate::api::scripts::loader::ScriptLoader::start_for_game(
         crate::api::scripts::engine::RhaiEngineFactory,
@@ -117,7 +142,10 @@ pub fn create_endpoints() -> (GameEndpoint, UiEndpoint) {
             intent_rx,
             outcome_tx,
             spawn_rx,
+            spawn_removal_rx,
             input_mailbox: input_mailbox.clone(),
+            script_panels_tx,
+            script_panel_events_rx,
         },
         UiEndpoint {
             console_requests: console_request_tx,
@@ -128,7 +156,10 @@ pub fn create_endpoints() -> (GameEndpoint, UiEndpoint) {
             intent_tx,
             outcome_rx,
             spawn_tx,
+            spawn_removal_tx,
             input_mailbox,
+            script_panels_rx,
+            script_panel_events_tx,
         },
     )
 }

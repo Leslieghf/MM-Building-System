@@ -4,7 +4,7 @@
 //! custom vector and must be constructed/destroyed by the game. It is opaque
 //! here by design; this module does not provide allocation or native calls.
 
-use crate::api::game::abi::types::Matrix4x4;
+use crate::api::game::abi::types::{HashId, Matrix4x4};
 use core::ffi::c_char;
 
 /// Opaque `SSpawnInstanceInfo`; never construct or dereference this in Rust.
@@ -46,6 +46,16 @@ pub enum SpawnObservation {
     Failed,
 }
 
+/// `CSpawnedEntityHandler` inline-vector offsets from the pinned SDK layout.
+///
+/// These offsets describe a copied observation surface only; callers must
+/// validate the handler and vector storage before reading them.
+pub const SPAWN_HANDLER_SPAWNED_LAST_FRAME_OFFSET: usize = 0xB0;
+pub const SPAWN_HANDLER_DESPAWNED_LAST_FRAME_OFFSET: usize = 0xD0;
+pub const SPAWN_HANDLER_FAILED_LAST_FRAME_OFFSET: usize = 0xF0;
+/// The SDK's `mm::std::vector<T>` occupies three pointers and eight padding bytes.
+pub const SDK_VECTOR_HEADER_BYTES: usize = 0x20;
+
 /// `SSpawnInstanceInfo::SetEntityFile(const char*)` candidate signature.
 pub type SetEntityFileFn = unsafe extern "system" fn(*mut SpawnInstanceInfo, *const c_char);
 
@@ -53,6 +63,16 @@ pub type SetEntityFileFn = unsafe extern "system" fn(*mut SpawnInstanceInfo, *co
 pub type SpawnInfoConstructorFn = unsafe extern "system" fn(*mut SpawnInstanceInfo);
 /// `SSpawnInstanceInfo` native destructor candidate.
 pub type SpawnInfoDestructorFn = unsafe extern "system" fn(*mut SpawnInstanceInfo);
+
+/// Steam SDK `SpawnSystemGetNewSpawnId(CHashString const&)` candidate.
+///
+/// The public SDK's caller passes a caller-owned `CHashString` by reference and
+/// initializes a local from the returned reference. Rust validates that the
+/// returned address is that same caller-owned scalar before accepting it.
+pub type SpawnIdAllocatorFn = unsafe extern "system" fn(*mut HashId) -> *mut HashId;
+
+/// `SpawnSystemDespawn(CHashString const&)` candidate signature.
+pub type SpawnDespawnFn = unsafe extern "system" fn(*const HashId);
 
 /// `SpawnSystemSpawn(SSpawnInstanceInfo*, CMatrix*)` candidate signature.
 pub type SpawnFn = unsafe extern "system" fn(*mut SpawnInstanceInfo, *mut Matrix4x4) -> usize;

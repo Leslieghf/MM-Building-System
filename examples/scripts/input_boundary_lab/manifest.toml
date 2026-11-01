@@ -1,0 +1,6 @@
+id = "input_boundary_lab"
+api_version = 1
+capabilities = ["input.read", "ui.panels"]
+
+[callbacks]
+"game.post_sim" = "on_post_sim"

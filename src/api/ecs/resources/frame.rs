@@ -1,7 +1,7 @@
 //! Copied frame data imported from the game-native boundary.
 //!
 //! These values contain owned observations only; native addresses are diagnostic identifiers, not handles.
-use super::super::{IntentOutcome, SpawnOutcome};
+use super::super::{IntentOutcome, OwnedSpawnView, SpawnOutcome, SpawnSystemFrameObservations};
 use crate::api::game::abi::types::Matrix4x4;
 use bevy_ecs::prelude::Resource;
 
@@ -61,6 +61,10 @@ pub struct GameSnapshot {
     pub last_intent_outcome: Option<IntentOutcome>,
     /// Most recent spawn-request outcome.
     pub last_spawn_outcome: Option<SpawnOutcome>,
+    /// Mod-owned spawn records copied from the runtime for menu controls.
+    pub owned_spawns: [Option<OwnedSpawnView>; 16],
+    /// Spawn-system handler events copied from its last-frame hash lists.
+    pub spawn_system_events: SpawnSystemFrameObservations,
     /// Sampled player position in game world units.
     pub player_position: Option<[f32; 3]>,
     /// Horizontal projection of the player transform's forward basis.

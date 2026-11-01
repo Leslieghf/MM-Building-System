@@ -58,10 +58,14 @@ pub struct GamePostSimContext {
     frame: Map,
     math: ScriptMath,
     camera: CopiedObject,
+    camera_control: InvocationCameraControl,
     player: CopiedObject,
     vehicle: CopiedObject,
     input: CopiedInput,
     raycast: InvocationRaycast,
+    spawn: InvocationSpawn,
+    ui: InvocationScriptUi,
+    dependencies: InvocationScriptDependencies,
     debug: InvocationDebugDraw,
     log: InvocationLog,
     can_read: bool,
@@ -69,9 +73,214 @@ pub struct GamePostSimContext {
 }
 
 #[derive(Clone)]
+pub(crate) struct InvocationCameraControl {
+    allowed: bool,
+    sequence: u64,
+    request: Arc<Mutex<Option<Option<crate::api::scripts::camera_override::CameraOverride>>>>,
+}
+
+impl InvocationCameraControl {
+    pub(crate) fn new(allowed: bool, sequence: u64) -> Self {
+        Self {
+            allowed,
+            sequence,
+            request: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn set_offset(
+        &mut self,
+        offset: Map,
+        euler_degrees: Map,
+    ) -> Result<(), Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "game.camera.control")?;
+        let offset = parse_script_vector(offset, "camera offset")?;
+        let euler_degrees = parse_script_vector(euler_degrees, "camera rotation")?;
+        if offset.iter().any(|value| value.abs() > 1000.0) {
+            return Err("camera world offset components must be within ±1000".into());
+        }
+        if euler_degrees.iter().any(|value| value.abs() > 180.0) {
+            return Err("camera yaw, pitch, and roll must be within ±180 degrees".into());
+        }
+        *self
+            .request
+            .lock()
+            .map_err(|_| Box::<rhai::EvalAltResult>::from("camera override lock unavailable"))? =
+            Some(Some(crate::api::scripts::camera_override::CameraOverride {
+                offset,
+                euler_degrees,
+            }));
+        Ok(())
+    }
+
+    fn clear(&mut self) -> Result<(), Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "game.camera.control")?;
+        *self
+            .request
+            .lock()
+            .map_err(|_| Box::<rhai::EvalAltResult>::from("camera override lock unavailable"))? =
+            Some(None);
+        Ok(())
+    }
+
+    fn available(&mut self) -> bool {
+        crate::api::scripts::camera_override::hook_available()
+    }
+
+    fn external_calls(&mut self) -> i64 {
+        crate::api::scripts::camera_override::external_getter_calls().min(i64::MAX as u64) as i64
+    }
+
+    fn external_override_calls(&mut self) -> i64 {
+        crate::api::scripts::camera_override::external_override_calls().min(i64::MAX as u64) as i64
+    }
+
+    pub(crate) fn finish(
+        &self,
+    ) -> Option<Option<crate::api::scripts::camera_override::CameraOverride>> {
+        self.request.lock().ok()?.take()
+    }
+
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct InvocationScriptUi {
+    allowed: bool,
+    events: Vec<ScriptPanelEvent>,
+    panels: Arc<Mutex<Vec<ScriptPanelModel>>>,
+    published: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct InvocationScriptDependencies {
+    available: BTreeMap<String, bool>,
+}
+
+impl InvocationScriptDependencies {
+    pub(crate) fn new(available: BTreeMap<String, bool>) -> Self {
+        Self { available }
+    }
+
+    fn available(&mut self, id: Dynamic) -> Result<bool, Box<rhai::EvalAltResult>> {
+        let id = ui_string(id, "dependency ID")?;
+        if id.is_empty() || id.len() > 64 || id.chars().any(char::is_control) {
+            return Err("dependency ID must be a short non-empty identifier".into());
+        }
+        Ok(self.available.get(&id).copied().unwrap_or(false))
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ScriptPanelBuilder {
+    model: ScriptPanelModel,
+}
+
+#[derive(Clone)]
 struct CopiedInput {
     frame: InputFrame,
     allowed: bool,
+}
+
+/// Invocation-local, catalog-gated spawn effect collector.
+#[derive(Clone)]
+pub(crate) struct InvocationSpawn {
+    allowed: bool,
+    capacity: bool,
+    source: ScriptEvent,
+    request: Arc<Mutex<Option<crate::api::scripts::manager::ScriptSpawnEffect>>>,
+}
+
+impl InvocationSpawn {
+    fn disabled() -> Self {
+        Self {
+            allowed: false,
+            capacity: false,
+            source: ScriptEvent {
+                request_id: None,
+                id: ScriptId::parse("disabled").expect("static script ID is valid"),
+                generation: ScriptGeneration(0),
+                phase: ScriptPhaseId::GamePostSim,
+                callback: String::new(),
+                kind: ScriptEventKind::Log,
+                status: None,
+                auto_reload: false,
+                reload_error: None,
+                line: None,
+                column: None,
+                text: String::new(),
+            },
+            request: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub(crate) fn new(allowed: bool, capacity: bool, source: ScriptEvent) -> Self {
+        Self {
+            allowed,
+            capacity,
+            source,
+            request: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn ready(&mut self) -> bool {
+        self.allowed && self.capacity && self.request.lock().is_ok_and(|request| request.is_none())
+    }
+
+    fn request(
+        &mut self,
+        catalog_id: Dynamic,
+        transform: Array,
+    ) -> Result<i64, Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "game.spawn")?;
+        if !self.capacity {
+            return Err("spawn request capacity is full".into());
+        }
+        let catalog_id = ui_string(catalog_id, "catalog ID")?;
+        let asset_key = crate::api::scripts::spawn_catalog::asset_key(&catalog_id)
+            .ok_or("catalog entry is not spawnable (known problematic/red catalog status)")?;
+        if transform.len() != 16 {
+            return Err("spawn transform must contain exactly 16 numbers".into());
+        }
+        let mut values = [0.0_f32; 16];
+        for (index, value) in transform.into_iter().enumerate() {
+            let value = numeric_value(value, "spawn transform values must be numbers")?;
+            if !value.is_finite() || value.abs() > 100_000.0 {
+                return Err("spawn transform values must be finite and within ±100000".into());
+            }
+            values[index] = value as f32;
+        }
+        let matrix = Matrix4x4::from_rows([
+            [values[0], values[1], values[2], values[3]],
+            [values[4], values[5], values[6], values[7]],
+            [values[8], values[9], values[10], values[11]],
+            [values[12], values[13], values[14], values[15]],
+        ]);
+        let request_id = crate::api::ecs::NEXT_INTENT_ID.fetch_add(1, Ordering::Relaxed);
+        let script_request_id = i64::try_from(request_id)
+            .map_err(|_| "spawn request ID exceeded script integer range")?;
+        let mut request = self
+            .request
+            .lock()
+            .map_err(|_| Box::<rhai::EvalAltResult>::from("spawn collector unavailable"))?;
+        if request.is_some() {
+            return Err("only one spawn request is allowed per callback".into());
+        }
+        *request = Some(crate::api::scripts::manager::ScriptSpawnEffect {
+            request_id,
+            catalog_id,
+            asset_key: asset_key.to_owned(),
+            matrix,
+            origin: self.source.clone(),
+        });
+        Ok(script_request_id)
+    }
+
+    pub(crate) fn finish(&self) -> Option<crate::api::scripts::manager::ScriptSpawnEffect> {
+        self.request.lock().ok()?.take()
+    }
 }
 
 #[derive(Clone, Default)]
@@ -115,6 +324,11 @@ pub(super) fn numeric_value(
         .ok_or_else(|| error.into())
 }
 impl CopiedInput {
+    fn available(&mut self) -> Result<bool, Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "input.read")?;
+        Ok(self.frame.is_available())
+    }
+
     fn query(&self, key: &str, state: u8) -> Result<bool, Box<rhai::EvalAltResult>> {
         require_capability(self.allowed, "input.read")?;
         let key = crate::api::ecs::input_key::InputKey::parse(key).ok_or_else(|| {
@@ -127,6 +341,302 @@ impl CopiedInput {
             _ => self.frame.just_released(key),
         })
     }
+}
+
+impl InvocationScriptUi {
+    pub(crate) fn new(allowed: bool, events: Vec<ScriptPanelEvent>) -> Self {
+        Self {
+            allowed,
+            events,
+            panels: Arc::new(Mutex::new(Vec::new())),
+            published: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn disabled() -> Self {
+        Self::new(false, Vec::new())
+    }
+
+    fn panel(
+        &mut self,
+        id: Dynamic,
+        title: Dynamic,
+    ) -> Result<ScriptPanelBuilder, Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "ui.panels")?;
+        let id = ui_string(id, "panel ID")?;
+        let title = ui_string(title, "panel title")?;
+        validate_ui_id(&id, "panel")?;
+        validate_ui_text(&title)?;
+        Ok(ScriptPanelBuilder {
+            model: ScriptPanelModel {
+                id,
+                title,
+                widgets: Vec::new(),
+            },
+        })
+    }
+
+    fn events(&mut self, panel_id: Dynamic) -> Result<Map, Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "ui.panels")?;
+        let panel_id = ui_string(panel_id, "panel ID")?;
+        validate_ui_id(&panel_id, "panel")?;
+        let mut values = Map::new();
+        for event in self
+            .events
+            .iter()
+            .filter(|event| event.panel_id == panel_id)
+        {
+            let value = match &event.value {
+                ScriptPanelValue::Bool(value) => Dynamic::from(*value),
+                ScriptPanelValue::Number(value) => Dynamic::from(*value),
+                ScriptPanelValue::Text(value) => Dynamic::from(value.clone()),
+            };
+            values.insert(event.widget_id.clone().into(), value);
+        }
+        Ok(values)
+    }
+
+    fn publish(&mut self, builder: ScriptPanelBuilder) -> Result<(), Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "ui.panels")?;
+        validate_ui_id(&builder.model.id, "panel")?;
+        validate_ui_text(&builder.model.title)?;
+        if builder.model.widgets.len() > crate::api::scripts::MAX_WIDGETS_PER_PANEL {
+            return Err("panel widget limit exceeded".into());
+        }
+        let Ok(mut panels) = self.panels.lock() else {
+            return Err("panel publication collector unavailable".into());
+        };
+        if panels.len() >= crate::api::scripts::MAX_PANELS_PER_SCRIPT {
+            return Err("script panel limit exceeded".into());
+        }
+        if panels.iter().any(|panel| panel.id == builder.model.id) {
+            return Err("duplicate panel ID in this callback".into());
+        }
+        panels.push(builder.model);
+        self.published.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    pub(crate) fn finish(&self) -> Option<Vec<ScriptPanelModel>> {
+        self.published.load(Ordering::Acquire).then(|| {
+            self.panels
+                .lock()
+                .map(|mut panels| std::mem::take(&mut *panels))
+                .unwrap_or_default()
+        })
+    }
+}
+
+impl ScriptPanelBuilder {
+    fn append(
+        &mut self,
+        id: &str,
+        kind: ScriptPanelWidgetKind,
+    ) -> Result<(), Box<rhai::EvalAltResult>> {
+        validate_ui_id(id, "widget")?;
+        if self.model.widgets.len() >= crate::api::scripts::MAX_WIDGETS_PER_PANEL {
+            return Err("panel widget limit exceeded".into());
+        }
+        if self.model.widgets.iter().any(|widget| widget.id == id) {
+            return Err("duplicate widget ID in panel".into());
+        }
+        self.model.widgets.push(ScriptPanelWidget {
+            id: id.to_owned(),
+            kind,
+        });
+        Ok(())
+    }
+
+    fn heading(&mut self, id: Dynamic, text: Dynamic) -> Result<Self, Box<rhai::EvalAltResult>> {
+        let id = ui_string(id, "widget ID")?;
+        let text = ui_string(text, "heading text")?;
+        validate_ui_text(&text)?;
+        self.append(&id, ScriptPanelWidgetKind::Heading { text })?;
+        Ok(self.clone())
+    }
+
+    fn label(&mut self, id: Dynamic, text: Dynamic) -> Result<Self, Box<rhai::EvalAltResult>> {
+        let id = ui_string(id, "widget ID")?;
+        let text = ui_string(text, "label text")?;
+        validate_ui_text(&text)?;
+        self.append(&id, ScriptPanelWidgetKind::Label { text })?;
+        Ok(self.clone())
+    }
+
+    fn status(
+        &mut self,
+        id: Dynamic,
+        text: Dynamic,
+        level: Dynamic,
+    ) -> Result<Self, Box<rhai::EvalAltResult>> {
+        let id = ui_string(id, "widget ID")?;
+        let text = ui_string(text, "status text")?;
+        let level = ui_string(level, "status level")?;
+        validate_ui_text(&text)?;
+        let level = match level.as_str() {
+            "stable" => crate::api::scripts::ScriptStatusLevel::Stable,
+            "problematic" => crate::api::scripts::ScriptStatusLevel::Problematic,
+            "experimental" => crate::api::scripts::ScriptStatusLevel::Experimental,
+            _ => return Err("status level must be stable, problematic, or experimental".into()),
+        };
+        self.append(&id, ScriptPanelWidgetKind::Status { text, level })?;
+        Ok(self.clone())
+    }
+
+    fn checkbox(
+        &mut self,
+        id: Dynamic,
+        label: Dynamic,
+        value: bool,
+    ) -> Result<Self, Box<rhai::EvalAltResult>> {
+        let id = ui_string(id, "widget ID")?;
+        let label = ui_string(label, "widget label")?;
+        validate_ui_text(&label)?;
+        self.append(&id, ScriptPanelWidgetKind::Checkbox { label, value })?;
+        Ok(self.clone())
+    }
+
+    fn slider(
+        &mut self,
+        id: Dynamic,
+        label: Dynamic,
+        value: rhai::FLOAT,
+        min: rhai::FLOAT,
+        max: rhai::FLOAT,
+    ) -> Result<Self, Box<rhai::EvalAltResult>> {
+        let id = ui_string(id, "widget ID")?;
+        let label = ui_string(label, "widget label")?;
+        validate_ui_number(value, min, max)?;
+        validate_ui_text(&label)?;
+        self.append(
+            &id,
+            ScriptPanelWidgetKind::Slider {
+                label,
+                value,
+                min,
+                max,
+            },
+        )?;
+        Ok(self.clone())
+    }
+
+    fn number(
+        &mut self,
+        id: Dynamic,
+        label: Dynamic,
+        value: rhai::FLOAT,
+        min: rhai::FLOAT,
+        max: rhai::FLOAT,
+        step: rhai::FLOAT,
+    ) -> Result<Self, Box<rhai::EvalAltResult>> {
+        let id = ui_string(id, "widget ID")?;
+        let label = ui_string(label, "widget label")?;
+        validate_ui_number(value, min, max)?;
+        if !step.is_finite() || step <= 0.0 {
+            return Err("numeric widget step must be finite and positive".into());
+        }
+        validate_ui_text(&label)?;
+        self.append(
+            &id,
+            ScriptPanelWidgetKind::Number {
+                label,
+                value,
+                min,
+                max,
+                step,
+            },
+        )?;
+        Ok(self.clone())
+    }
+
+    fn select(
+        &mut self,
+        id: Dynamic,
+        label: Dynamic,
+        value: Dynamic,
+        options: Array,
+    ) -> Result<Self, Box<rhai::EvalAltResult>> {
+        let id = ui_string(id, "widget ID")?;
+        let label = ui_string(label, "widget label")?;
+        let value = ui_string(value, "selector value")?;
+        validate_ui_text(&label)?;
+        validate_ui_text(&value)?;
+        if options.is_empty() || options.len() > crate::api::scripts::MAX_PANEL_OPTIONS {
+            return Err("selector option limit exceeded".into());
+        }
+        let mut parsed = Vec::with_capacity(options.len());
+        for option in options {
+            let option = option
+                .try_cast::<rhai::ImmutableString>()
+                .ok_or("selector options must be strings")?
+                .to_string();
+            validate_ui_text(&option)?;
+            parsed.push(option);
+        }
+        if !parsed.iter().any(|option| option == &value) {
+            return Err("selector value must match an option".into());
+        }
+        self.append(
+            &id,
+            ScriptPanelWidgetKind::Select {
+                label,
+                value,
+                options: parsed,
+            },
+        )?;
+        Ok(self.clone())
+    }
+
+    fn button(&mut self, id: Dynamic, label: Dynamic) -> Result<Self, Box<rhai::EvalAltResult>> {
+        let id = ui_string(id, "widget ID")?;
+        let label = ui_string(label, "widget label")?;
+        validate_ui_text(&label)?;
+        self.append(&id, ScriptPanelWidgetKind::Button { label })?;
+        Ok(self.clone())
+    }
+}
+
+fn ui_string(value: Dynamic, label: &str) -> Result<String, Box<rhai::EvalAltResult>> {
+    value
+        .try_cast::<rhai::ImmutableString>()
+        .map(|value| value.to_string())
+        .ok_or_else(|| format!("{label} must be a string").into())
+}
+
+fn validate_ui_id(value: &str, kind: &str) -> Result<(), Box<rhai::EvalAltResult>> {
+    if value.is_empty()
+        || value.len() > crate::api::scripts::MAX_SCRIPT_ID_BYTES
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
+    {
+        return Err(format!("invalid {kind} ID").into());
+    }
+    Ok(())
+}
+
+fn validate_ui_text(value: &str) -> Result<(), Box<rhai::EvalAltResult>> {
+    if value.len() > crate::api::scripts::MAX_PANEL_TEXT_BYTES {
+        return Err("panel text limit exceeded".into());
+    }
+    Ok(())
+}
+
+fn validate_ui_number(value: f64, min: f64, max: f64) -> Result<(), Box<rhai::EvalAltResult>> {
+    if !value.is_finite()
+        || !min.is_finite()
+        || !max.is_finite()
+        || min >= max
+        || value < min
+        || value > max
+        || min.abs().max(max.abs()) > 100_000.0
+    {
+        return Err(
+            "widget value must be finite, within its ordered bounds, and within ±100000".into(),
+        );
+    }
+    Ok(())
 }
 #[derive(Clone)]
 struct CopiedObject {
@@ -231,7 +741,7 @@ impl RaycastTicketStore {
         let Some(ticket) = u64::try_from(ticket).ok() else {
             return raycast_result_map("unknown", false, None, None, false);
         };
-        let Ok(entries) = self.0.lock() else {
+        let Ok(mut entries) = self.0.lock() else {
             return raycast_result_map("unavailable", false, None, None, false);
         };
         let Some(entry) = entries.get(&ticket) else {
@@ -241,9 +751,11 @@ impl RaycastTicketStore {
             return raycast_result_map("unknown", false, None, None, false);
         }
         if callback_sequence > entry.expires_at {
+            entries.remove(&ticket);
             return raycast_result_map("expired", false, None, None, false);
         }
-        match entry.available {
+        let is_terminal = entry.available.is_some();
+        let result = match entry.available {
             None => raycast_result_map("pending", false, None, None, false),
             Some(false) => raycast_result_map("unavailable", false, None, None, false),
             Some(true) => raycast_result_map(
@@ -254,7 +766,11 @@ impl RaycastTicketStore {
                 entry.fraction,
                 entry.state_present,
             ),
+        };
+        if is_terminal {
+            entries.remove(&ticket);
         }
+        result
     }
 }
 
@@ -286,6 +802,8 @@ pub(crate) struct InvocationRaycast {
     source: ScriptEvent,
     callback_sequence: u64,
     tickets: RaycastTicketStore,
+    camera_position: Option<[f32; 3]>,
+    camera_direction: Option<[f32; 3]>,
 }
 
 impl InvocationRaycast {
@@ -310,6 +828,8 @@ impl InvocationRaycast {
             },
             0,
             RaycastTicketStore::default(),
+            None,
+            None,
         )
     }
 
@@ -319,6 +839,8 @@ impl InvocationRaycast {
         source: ScriptEvent,
         callback_sequence: u64,
         tickets: RaycastTicketStore,
+        camera_position: Option<[f32; 3]>,
+        camera_direction: Option<[f32; 3]>,
     ) -> Self {
         Self {
             active: Arc::new(AtomicBool::new(true)),
@@ -328,6 +850,8 @@ impl InvocationRaycast {
             source,
             callback_sequence,
             tickets,
+            camera_position,
+            camera_direction,
         }
     }
 
@@ -402,6 +926,37 @@ impl InvocationRaycast {
             .tickets
             .result(ticket, &self.source, self.callback_sequence))
     }
+
+    fn request_camera(
+        &mut self,
+        max_distance: Dynamic,
+        filter_name: &str,
+    ) -> Result<i64, Box<rhai::EvalAltResult>> {
+        require_capability(self.allowed, "game.raycast")?;
+        if !self.active.load(Ordering::Relaxed) {
+            return Err("raycast context has expired".into());
+        }
+        let origin = self
+            .camera_position
+            .ok_or_else(|| Box::<rhai::EvalAltResult>::from("camera position unavailable"))?;
+        let direction = self
+            .camera_direction
+            .ok_or_else(|| Box::<rhai::EvalAltResult>::from("camera direction unavailable"))?;
+        self.request(
+            vector_map(origin),
+            vector_map(direction),
+            max_distance,
+            filter_name,
+        )
+    }
+}
+
+fn vector_map(value: [f32; 3]) -> Map {
+    let mut map = Map::new();
+    for (name, value) in ["x", "y", "z"].into_iter().zip(value) {
+        map.insert(name.into(), Dynamic::from(f64::from(value)));
+    }
+    map
 }
 
 fn parse_script_vector(
@@ -608,6 +1163,7 @@ impl GamePostSimContext {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn new_with_raycast(
         snapshot: GameSnapshot,
         log: InvocationLog,
@@ -615,6 +1171,49 @@ impl GamePostSimContext {
         write: InvocationVehicleWrite,
         raycast: InvocationRaycast,
         debug: InvocationDebugDraw,
+    ) -> Self {
+        Self::new_with_ui(
+            snapshot,
+            log,
+            capabilities,
+            write,
+            raycast,
+            debug,
+            InvocationScriptUi::disabled(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_ui(
+        snapshot: GameSnapshot,
+        log: InvocationLog,
+        capabilities: &[String],
+        write: InvocationVehicleWrite,
+        raycast: InvocationRaycast,
+        debug: InvocationDebugDraw,
+        ui: InvocationScriptUi,
+    ) -> Self {
+        Self::new_with_dependencies(
+            snapshot,
+            log,
+            capabilities,
+            write,
+            raycast,
+            debug,
+            ui,
+            BTreeMap::new(),
+        )
+    }
+
+    pub(crate) fn new_with_dependencies(
+        snapshot: GameSnapshot,
+        log: InvocationLog,
+        capabilities: &[String],
+        write: InvocationVehicleWrite,
+        raycast: InvocationRaycast,
+        debug: InvocationDebugDraw,
+        ui: InvocationScriptUi,
+        dependencies: BTreeMap<String, bool>,
     ) -> Self {
         let mut frame = Map::new();
         frame.insert("phase".into(), Dynamic::from("game.post_sim"));
@@ -644,9 +1243,13 @@ impl GamePostSimContext {
             frame,
             math: ScriptMath,
             camera: camera_object(snapshot.camera_position, snapshot.camera_direction),
+            camera_control: InvocationCameraControl::new(false, snapshot.callback_sequence),
             can_read: capabilities.iter().any(|id| id == "game.read"),
             can_log: capabilities.iter().any(|id| id == "log"),
             raycast,
+            spawn: InvocationSpawn::disabled(),
+            ui,
+            dependencies: InvocationScriptDependencies::new(dependencies),
             player: object(
                 snapshot.player_position,
                 snapshot.player_transform,
@@ -677,6 +1280,16 @@ impl GamePostSimContext {
             log,
         }
     }
+
+    pub(crate) fn with_spawn(mut self, spawn: InvocationSpawn) -> Self {
+        self.spawn = spawn;
+        self
+    }
+
+    pub(crate) fn with_camera_control(mut self, control: InvocationCameraControl) -> Self {
+        self.camera_control = control;
+        self
+    }
 }
 pub(crate) fn register_v1(engine: &mut Engine) {
     ScriptMath::register(engine);
@@ -692,6 +1305,11 @@ fn register_context_properties(engine: &mut Engine) {
         .register_type_with_name::<GamePostSimContext>("MadMaxPostSimContext")
         .register_type_with_name::<CopiedObject>("MadMaxCopiedObject")
         .register_type_with_name::<InvocationRaycast>("MadMaxRaycast")
+        .register_type_with_name::<InvocationCameraControl>("MadMaxCameraControl")
+        .register_type_with_name::<InvocationSpawn>("MadMaxEntitySpawner")
+        .register_type_with_name::<InvocationScriptUi>("MadMaxScriptUi")
+        .register_type_with_name::<InvocationScriptDependencies>("MadMaxScriptDependencies")
+        .register_type_with_name::<ScriptPanelBuilder>("MadMaxPanelBuilder")
         .register_type_with_name::<CopiedInput>("MadMaxInputFrame")
         .register_type_with_name::<ScriptFormatter>("MadMaxFormatter")
         .register_type_with_name::<InvocationLog>("MadMaxLog")
@@ -701,6 +1319,9 @@ fn register_context_properties(engine: &mut Engine) {
         .register_get("camera", |ctx: &mut GamePostSimContext| {
             require_capability(ctx.can_read, "game.read")?;
             Ok::<_, Box<rhai::EvalAltResult>>(ctx.camera.clone())
+        })
+        .register_get("camera_control", |ctx: &mut GamePostSimContext| {
+            Ok::<_, Box<rhai::EvalAltResult>>(ctx.camera_control.clone())
         })
         .register_get("player", |ctx: &mut GamePostSimContext| {
             require_capability(ctx.can_read, "game.read")?;
@@ -713,6 +1334,17 @@ fn register_context_properties(engine: &mut Engine) {
         .register_get("raycast", |ctx: &mut GamePostSimContext| {
             require_capability(ctx.raycast.allowed, "game.raycast")?;
             Ok::<_, Box<rhai::EvalAltResult>>(ctx.raycast.clone())
+        })
+        .register_get("entities", |ctx: &mut GamePostSimContext| {
+            require_capability(ctx.spawn.allowed, "game.spawn")?;
+            Ok::<_, Box<rhai::EvalAltResult>>(ctx.spawn.clone())
+        })
+        .register_get("ui", |ctx: &mut GamePostSimContext| {
+            require_capability(ctx.ui.allowed, "ui.panels")?;
+            Ok::<_, Box<rhai::EvalAltResult>>(ctx.ui.clone())
+        })
+        .register_get("dependencies", |ctx: &mut GamePostSimContext| {
+            Ok::<_, Box<rhai::EvalAltResult>>(ctx.dependencies.clone())
         })
         .register_get("input", |ctx: &mut GamePostSimContext| {
             require_capability(ctx.input.allowed, "input.read")?;
@@ -737,7 +1369,35 @@ fn register_context_properties(engine: &mut Engine) {
              distance: Dynamic,
              filter: &str| raycast.request(origin, direction, distance, filter),
         )
-        .register_fn("result", InvocationRaycast::result);
+        .register_fn(
+            "camera",
+            |raycast: &mut InvocationRaycast, distance: Dynamic, filter: &str| {
+                raycast.request_camera(distance, filter)
+            },
+        )
+        .register_fn("result", InvocationRaycast::result)
+        .register_fn("ready", InvocationSpawn::ready)
+        .register_fn("request", InvocationSpawn::request)
+        .register_fn("set_offset", InvocationCameraControl::set_offset)
+        .register_fn("clear", InvocationCameraControl::clear)
+        .register_fn("available", InvocationCameraControl::available)
+        .register_fn("external_calls", InvocationCameraControl::external_calls)
+        .register_fn(
+            "external_override_calls",
+            InvocationCameraControl::external_override_calls,
+        )
+        .register_fn("panel", InvocationScriptUi::panel)
+        .register_fn("events", InvocationScriptUi::events)
+        .register_fn("publish", InvocationScriptUi::publish)
+        .register_fn("available", InvocationScriptDependencies::available)
+        .register_fn("heading", ScriptPanelBuilder::heading)
+        .register_fn("label", ScriptPanelBuilder::label)
+        .register_fn("status", ScriptPanelBuilder::status)
+        .register_fn("checkbox", ScriptPanelBuilder::checkbox)
+        .register_fn("slider", ScriptPanelBuilder::slider)
+        .register_fn("number", ScriptPanelBuilder::number)
+        .register_fn("select", ScriptPanelBuilder::select)
+        .register_fn("button", ScriptPanelBuilder::button);
 }
 
 fn register_basic_debug_draw(engine: &mut Engine) {
@@ -833,6 +1493,7 @@ fn register_value_helpers(engine: &mut Engine) {
         .register_fn("just_released", |input: &mut CopiedInput, key: &str| {
             input.query(key, 2)
         })
+        .register_fn("available", CopiedInput::available)
         .register_fn("set_velocity", |object: &mut CopiedObject, value: Map| {
             let write = object.write.as_ref().ok_or_else(|| {
                 Box::<rhai::EvalAltResult>::from("set_velocity is only available on ctx.vehicle")
@@ -1013,7 +1674,7 @@ mod math_integration_tests {
 mod debug_draw_tests {
     use super::{
         DebugPrimitive, GamePostSimContext, InvocationDebugDraw, InvocationLog, InvocationRaycast,
-        InvocationVehicleWrite, RaycastTicketStore, register_v1,
+        InvocationScriptUi, InvocationVehicleWrite, RaycastTicketStore, register_v1,
     };
     use crate::api::ecs::GameSnapshot;
     use crate::api::game::abi::types::Matrix4x4;
@@ -1198,8 +1859,7 @@ mod debug_draw_tests {
     #[test]
     fn reticle_ray_script_uses_the_general_raycast_request_api() {
         let script = include_str!("../../../examples/scripts/reticle_ray/main.rhai");
-        let mut engine = Engine::new();
-        register_v1(&mut engine);
+        let engine = crate::api::scripts::engine::RhaiEngineFactory::build();
         let ast = engine
             .compile(script)
             .expect("reticle script should compile");
@@ -1221,7 +1881,15 @@ mod debug_draw_tests {
         let event_sink = crate::api::scripts::ScriptEventSink(sink);
         let log = InvocationLog::new(event_sink.clone(), event.clone());
         let tickets = RaycastTicketStore::default();
-        let raycast = InvocationRaycast::new(true, true, event.clone(), 1, tickets.clone());
+        let raycast = InvocationRaycast::new(
+            true,
+            true,
+            event.clone(),
+            1,
+            tickets.clone(),
+            Some([0.0, 1.0, 2.0]),
+            Some([0.0, 0.0, -1.0]),
+        );
         let snapshot = GameSnapshot {
             callback_sequence: 1,
             sample_sequence: 1,
@@ -1229,17 +1897,19 @@ mod debug_draw_tests {
             camera_direction: Some([0.0, 0.0, -1.0]),
             ..GameSnapshot::default()
         };
-        let context = GamePostSimContext::new_with_raycast(
+        let context = GamePostSimContext::new_with_ui(
             snapshot,
             log,
             &[
                 "debug.draw".to_owned(),
                 "game.read".to_owned(),
                 "game.raycast".to_owned(),
+                "ui.panels".to_owned(),
             ],
             InvocationVehicleWrite::new(false, false, false),
             raycast.clone(),
             InvocationDebugDraw::new(true, 32, 256),
+            InvocationScriptUi::new(true, Vec::new()),
         );
         let mut scope = rhai::Scope::new();
         let mut state = Map::new();
@@ -1261,8 +1931,16 @@ mod debug_draw_tests {
         assert_eq!(request.origin, [0.0, 1.0, 2.0]);
         assert_eq!(request.direction, [0.0, 0.0, -1.0]);
 
-        let next_raycast = InvocationRaycast::new(true, true, event.clone(), 2, tickets);
-        let next_context = GamePostSimContext::new_with_raycast(
+        let next_raycast = InvocationRaycast::new(
+            true,
+            true,
+            event.clone(),
+            2,
+            tickets,
+            Some([0.0, 1.0, 2.0]),
+            Some([0.0, 0.0, -1.0]),
+        );
+        let next_context = GamePostSimContext::new_with_ui(
             GameSnapshot {
                 callback_sequence: 2,
                 sample_sequence: 1,
@@ -1275,10 +1953,12 @@ mod debug_draw_tests {
                 "debug.draw".to_owned(),
                 "game.read".to_owned(),
                 "game.raycast".to_owned(),
+                "ui.panels".to_owned(),
             ],
             InvocationVehicleWrite::new(false, false, false),
             next_raycast.clone(),
             InvocationDebugDraw::new(true, 32, 256),
+            InvocationScriptUi::new(true, Vec::new()),
         );
         engine
             .call_fn_with_options::<()>(

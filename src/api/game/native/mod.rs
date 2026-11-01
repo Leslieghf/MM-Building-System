@@ -28,11 +28,11 @@ use sampling::*;
 
 use crate::api::ecs::{
     GameEndpoint, GameRuntime, GameSnapshot, IntentResult, PendingGameIntent, PendingSpawnIntent,
-    PendingVelocityIntent, SpawnOutcome, SpawnRequestResult,
+    PendingSpawnRemoval, PendingVelocityIntent, SpawnOutcome, SpawnRequestResult,
 };
 use crate::api::game::abi::build::steam::{
     CAMERA_MANAGER_SINGLETON, CHARACTER_MANAGER_SINGLETON, DEVICE_MANAGER_SINGLETON,
-    GET_CAMERA_MATRIX, GET_CHARACTER_VEHICLE, GET_PLAYER_CHARACTER, SPAWN_INFO_CTOR,
+    GET_CAMERA_MATRIX, GET_CHARACTER_VEHICLE, GET_PLAYER_CHARACTER, SPAWN_DESPAWN, SPAWN_INFO_CTOR,
     SPAWN_INFO_DTOR, SPAWN_SET_ENTITY_FILE, SPAWN_SUBMIT,
 };
 use crate::api::game::abi::core::input::{
@@ -46,11 +46,11 @@ use crate::api::game::abi::game::character::{
     GetPlayerCharacterFn as GetPlayerCharacter,
 };
 use crate::api::game::abi::game::object::{
-    GET_TRANSFORM_SLOT_CANDIDATE as GET_TRANSFORM_VTABLE_SLOT, GameObject,
-    GetTransformFn as GetTransform,
+    GET_TRANSFORM_SLOT as GET_TRANSFORM_VTABLE_SLOT, GameObject, GetTransformFn as GetTransform,
 };
 use crate::api::game::abi::game::spawn::{
-    SetEntityFileFn, SpawnFn, SpawnInfoConstructorFn, SpawnInfoDestructorFn, SpawnInstanceInfo,
+    SetEntityFileFn, SpawnDespawnFn, SpawnFn, SpawnInfoConstructorFn, SpawnInfoDestructorFn,
+    SpawnInstanceInfo,
 };
 use crate::api::game::abi::game::vehicle::{
     GET_ACCELERATION_SLOT_CANDIDATE as VEHICLE_GET_ACCELERATION_VTABLE_SLOT,
@@ -87,6 +87,13 @@ use std::sync::atomic::{
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
+
+pub(crate) fn last_mod_performance_micros() -> (u64, u64) {
+    (
+        callback::last_game_runtime_micros(),
+        sampling::reticle::last_world_query_micros(),
+    )
+}
 
 #[repr(C)]
 struct MemoryBasicInformation {
@@ -583,6 +590,7 @@ static ORIGINAL_UPDATE_POST_SIM: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mu
 static UPDATE_POST_SIM_INSTALLED: AtomicBool = AtomicBool::new(false);
 static ORIGINAL_CAMERA_RAYCAST: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static CAMERA_RAYCAST_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
+static ORIGINAL_GET_CAMERA_MATRIX: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static CAMERA_RAYCAST_CALLS: AtomicU64 = AtomicU64::new(0);
 static ORIGINAL_WEAPON_RAY_POSITION: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static WEAPON_RAY_POSITION_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
@@ -807,9 +815,12 @@ fn install_update_post_sim_hook() {
             install_hook(target);
             if UPDATE_POST_SIM_INSTALLED.load(Ordering::Acquire) {
                 log_sampled_height_field_virtual_code(image_base);
-                install_camera_raycast_hook(image_base);
-                install_weapon_ray_position_hook(image_base);
-                wait_for_stable_callback_then_install_world_query(image_base);
+                install_camera_matrix_override_hook();
+                if cfg!(feature = "research-taps") {
+                    install_camera_raycast_hook(image_base);
+                    install_weapon_ray_position_hook(image_base);
+                    wait_for_stable_callback_then_install_world_query(image_base);
+                }
             }
             return;
         }
@@ -1146,7 +1157,8 @@ unsafe extern "system" fn update_post_sim_hook(context: *mut c_void) {
 
     let original: UpdatePostSim = unsafe { std::mem::transmute(original) };
     unsafe { original(context) };
-    UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel);
+    let callback_sequence = UPDATE_POST_SIM_CALLS.fetch_add(1, Ordering::AcqRel) + 1;
+    crate::api::scripts::camera_override::advance_frame(callback_sequence);
 
     let thread_mismatch = thread_id != expected_thread;
     if thread_mismatch {

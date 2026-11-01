@@ -1,0 +1,16 @@
+id = "event_workbench"
+api_version = 1
+version = "0.1.0"
+sources = ["main.rhai", "events.rhai"]
+capabilities = ["ui.panels", "ui.workbench"]
+requires = [
+    { kind = "host_api", id = "workbench.tabs", version = "^1.0.0" },
+]
+
+[workbench_tab]
+id = "events"
+title = "Events"
+order = 100
+
+[callbacks]
+"game.post_sim" = "on_post_sim"

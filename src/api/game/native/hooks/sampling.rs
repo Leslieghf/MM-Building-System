@@ -6,6 +6,87 @@
 //! Sampling policy and decoding live in `adapter::sampling`.
 use super::super::*;
 
+pub(in crate::api::game::native) fn install_camera_matrix_override_hook() {
+    let target = GET_CAMERA_MATRIX;
+    if !is_readable_executable_page(target) {
+        append_log(
+            "Camera override refused: GetCameraMatrix is not executable in this game build.",
+        );
+        return;
+    }
+    let address = target as *mut c_void;
+    let detour = get_camera_matrix_override_hook as *const () as *mut c_void;
+    let mut original = ptr::null_mut();
+    let created = unsafe { mh::MH_CreateHook(address, detour, &mut original) };
+    if created != MH_STATUS::MH_OK {
+        append_log(&format!(
+            "Camera override refused: MinHook could not create the getter hook ({created:?})."
+        ));
+        return;
+    }
+    ORIGINAL_GET_CAMERA_MATRIX.store(original, Ordering::Release);
+    let enabled = unsafe { mh::MH_EnableHook(address) };
+    if enabled != MH_STATUS::MH_OK {
+        ORIGINAL_GET_CAMERA_MATRIX.store(ptr::null_mut(), Ordering::Release);
+        append_log(&format!(
+            "Camera override refused: MinHook could not enable the getter hook ({enabled:?})."
+        ));
+        return;
+    }
+    crate::api::scripts::camera_override::set_hook_available(true);
+    append_log(&format!(
+        "Experimental camera matrix override hooked GetCameraMatrix at 0x{target:X}."
+    ));
+}
+
+unsafe extern "system" fn get_camera_matrix_override_hook(
+    manager: *mut CameraControlManager,
+    output: *mut Matrix4x4,
+) {
+    let external_call = crate::api::scripts::camera_override::record_getter_call();
+    let original = ORIGINAL_GET_CAMERA_MATRIX.load(Ordering::Acquire);
+    if original.is_null() {
+        return;
+    }
+    let original: GetCameraMatrix = unsafe { std::mem::transmute(original) };
+    unsafe { original(manager, output) };
+    if output.is_null() || !writable_span(output as usize, size_of::<Matrix4x4>()) {
+        return;
+    }
+    let Some(override_pose) = crate::api::scripts::camera_override::current() else {
+        return;
+    };
+    if external_call {
+        crate::api::scripts::camera_override::record_external_override_call();
+    }
+    let mut matrix = unsafe { ptr::read_unaligned(output) };
+    apply_camera_override(&mut matrix, override_pose);
+    unsafe { ptr::write_unaligned(output, matrix) };
+}
+
+fn apply_camera_override(
+    matrix: &mut Matrix4x4,
+    pose: crate::api::scripts::camera_override::CameraOverride,
+) {
+    for (translation, offset) in matrix.values[3][..3].iter_mut().zip(pose.offset) {
+        *translation += offset;
+    }
+    let [yaw, pitch, roll] = pose.euler_degrees.map(f32::to_radians);
+    let (sy, cy) = yaw.sin_cos();
+    let (sp, cp) = pitch.sin_cos();
+    let (sr, cr) = roll.sin_cos();
+    for row in &mut matrix.values[..3] {
+        let [x, y, z] = [row[0], row[1], row[2]];
+        let x1 = cy * x + sy * z;
+        let z1 = -sy * x + cy * z;
+        let y2 = cp * y - sp * z1;
+        let z2 = sp * y + cp * z1;
+        row[0] = cr * x1 - sr * y2;
+        row[1] = sr * x1 + cr * y2;
+        row[2] = z2;
+    }
+}
+
 pub(in crate::api::game::native) fn install_camera_raycast_hook(image_base: usize) {
     let Some(target) = image_base.checked_add(RAYCAST_STATIC_FROM_CAMERA_RVA) else {
         append_log("Camera ray tap refused: callback address overflowed.");

@@ -1,0 +1,16 @@
+id = "engine_workbench"
+api_version = 1
+capabilities = [
+    "debug.draw",
+    "game.camera.control",
+    "game.raycast",
+    "game.read",
+    "game.spawn",
+    "game.vehicle.write",
+    "input.read",
+    "log",
+    "ui.panels",
+]
+
+[callbacks]
+"game.post_sim" = "on_post_sim"

@@ -18,7 +18,7 @@ use super::{engine::RhaiEngineFactory, *};
 use crate::api::ecs::GameSnapshot;
 use crate::api::rhai::bindings::{
     DebugPrimitive, GamePostSimContext, InvocationDebugDraw, InvocationLog, InvocationRaycast,
-    InvocationVehicleWrite, RaycastTicketStore,
+    InvocationSpawn, InvocationVehicleWrite, RaycastTicketStore,
 };
 use bevy_ecs::prelude::Resource;
 use rhai::{AST, CallFnOptions, Dynamic, Engine, Map, Scope};
@@ -44,6 +44,8 @@ pub const MAX_DEBUG_DRAW_WORK_PER_INVOCATION: usize = 256;
 pub const MAX_DEBUG_DRAW_WORK_PER_PHASE: usize = 512;
 /// Maximum native ray queries dispatched from scripts in one game callback.
 pub const MAX_RAYCAST_REQUESTS_PER_PHASE: usize = 8;
+/// Maximum catalog-approved spawn requests emitted from scripts per callback.
+pub const MAX_SCRIPT_SPAWNS_PER_PHASE: usize = 1;
 /// Limit outstanding effects too: the native adapter drains one intent per callback.
 pub const MAX_PENDING_VELOCITY_EFFECTS: usize = 32;
 pub(crate) struct VehicleVelocityEffect {
@@ -54,6 +56,13 @@ pub(crate) struct ScriptDebugDrawEffect {
     pub primitive: DebugPrimitive,
     pub origin: ScriptEvent,
 }
+pub(crate) struct ScriptSpawnEffect {
+    pub request_id: u64,
+    pub catalog_id: String,
+    pub asset_key: String,
+    pub matrix: crate::api::game::abi::types::Matrix4x4,
+    pub origin: ScriptEvent,
+}
 /// Maximum top-level values retained in a script's persistent state map.
 pub const MAX_STATE_VALUES: usize = 1024;
 /// Maximum nested state container depth.
@@ -62,6 +71,10 @@ pub const MAX_STATE_DEPTH: usize = 16;
 pub use super::package::PreparedScript;
 struct ActiveScript {
     capabilities: Vec<String>,
+    version: super::package::PackageVersion,
+    requires: Vec<super::package::PackageRequirement>,
+    conflicts: Vec<super::package::PackageConflict>,
+    workbench_tab: Option<super::package::WorkbenchTabMetadata>,
     ast: AST,
     scope: Scope<'static>,
     generation: ScriptGeneration,
@@ -72,6 +85,61 @@ struct ActiveScript {
     reload_error: Option<String>,
     latest_load_request_id: u64,
     deferred_auto_reload: Option<super::loader::LoadScriptRequest>,
+}
+
+struct InstallCandidate {
+    id: ScriptId,
+    ast: AST,
+    callbacks: BTreeMap<ScriptPhaseId, String>,
+    on_run: Option<String>,
+    capabilities: Vec<String>,
+    version: super::package::PackageVersion,
+    requires: Vec<super::package::PackageRequirement>,
+    conflicts: Vec<super::package::PackageConflict>,
+    workbench_tab: Option<super::package::WorkbenchTabMetadata>,
+    replace: bool,
+}
+
+fn take_panel_events(
+    events: &mut Vec<ScriptPanelEvent>,
+    id: &ScriptId,
+    generation: ScriptGeneration,
+) -> Vec<ScriptPanelEvent> {
+    let mut selected = Vec::new();
+    let mut remaining = Vec::with_capacity(events.len());
+    for event in events.drain(..) {
+        if &event.script_id == id && event.generation == generation {
+            selected.push(event);
+        } else {
+            remaining.push(event);
+        }
+    }
+    *events = remaining;
+    selected
+}
+
+fn dependency_availability(
+    requirements: &[super::package::PackageRequirement],
+    active: &BTreeMap<ScriptId, semver::Version>,
+) -> BTreeMap<String, bool> {
+    requirements
+        .iter()
+        .map(|requirement| {
+            let available = match requirement.kind {
+                super::package::PackageRequirementKind::HostApi => {
+                    super::package_graph::host_api_version(&requirement.id)
+                        .is_some_and(|version| requirement.version.matches(&version))
+                }
+                super::package::PackageRequirementKind::Package => {
+                    ScriptId::parse(requirement.id.clone())
+                        .ok()
+                        .and_then(|id| active.get(&id))
+                        .is_some_and(|version| requirement.version.matches(version))
+                }
+            };
+            (requirement.id.clone(), available)
+        })
+        .collect()
 }
 enum PendingChange {
     Install(PreparedScript, bool),
@@ -124,6 +192,8 @@ pub struct ScriptManager {
     load_requests: BTreeMap<ScriptId, PendingLoad>,
     events: ScriptEventSink,
     raycast_tickets: RaycastTicketStore,
+    panel_publications: BTreeMap<ScriptId, ScriptPanelPublication>,
+    pending_panel_events: Vec<ScriptPanelEvent>,
 }
 impl Default for ScriptManager {
     fn default() -> Self {
@@ -145,6 +215,8 @@ impl ScriptManager {
             load_requests: BTreeMap::new(),
             events,
             raycast_tickets: RaycastTicketStore::default(),
+            panel_publications: BTreeMap::new(),
+            pending_panel_events: Vec::new(),
         }
     }
     fn stage(&mut self, change: PendingChange) -> Result<(), &'static str> {
@@ -300,6 +372,33 @@ impl ScriptManager {
         id: ScriptId,
         request_id: Option<u64>,
     ) -> Result<(), &'static str> {
+        if let Some(target) = self.active.get(&id) {
+            let dependents = self
+                .active
+                .iter()
+                .filter(|(dependent_id, script)| {
+                    *dependent_id != &id
+                        && script.requires.iter().any(|requirement| {
+                            requirement.kind == super::package::PackageRequirementKind::Package
+                                && !requirement.optional
+                                && requirement.id == id.as_str()
+                                && requirement.version.matches(&target.version.0)
+                        })
+                })
+                .map(|(dependent_id, _)| dependent_id.as_str().to_owned())
+                .collect::<Vec<_>>();
+            if !dependents.is_empty() {
+                self.report_failure(
+                    id.clone(),
+                    request_id,
+                    &format!(
+                        "unload blocked; required by active packages: {}",
+                        dependents.join(", ")
+                    ),
+                );
+                return Err("unload blocked by active required dependents");
+            }
+        }
         // Check staging capacity before accepting a worker-side watch removal.
         if self.pending.len() >= MAX_PENDING_CHANGES {
             return self.stage(PendingChange::Unload(id, request_id));
@@ -576,45 +675,214 @@ impl ScriptManager {
         if tracked {
             self.load_requests.remove(&prepared_id);
         }
-        let (id, ast, callbacks, on_run, capabilities, replace) = prepared.into_parts();
-        if !self.can_install(&id, replace, request_id) {
-            return;
-        }
-        let Some(generation) = self.allocate_generation(&id, request_id) else {
-            return;
-        };
-        self.activate_script(
+        let (
             id,
             ast,
             callbacks,
             on_run,
             capabilities,
+            version,
+            requires,
+            conflicts,
+            workbench_tab,
+            dependencies,
             replace,
-            request_id,
-            generation,
-        );
+        ) = prepared.into_parts();
+        let mut candidates = Vec::with_capacity(dependencies.len() + 1);
+        for dependency in dependencies {
+            let (
+                id,
+                ast,
+                callbacks,
+                on_run,
+                capabilities,
+                version,
+                requires,
+                conflicts,
+                workbench_tab,
+            ) = dependency.into_parts();
+            candidates.push(InstallCandidate {
+                id,
+                ast,
+                callbacks,
+                on_run,
+                capabilities,
+                version,
+                requires,
+                conflicts,
+                workbench_tab,
+                replace: false,
+            });
+        }
+        candidates.push(InstallCandidate {
+            id: id.clone(),
+            ast,
+            callbacks,
+            on_run,
+            capabilities,
+            version,
+            requires,
+            conflicts,
+            workbench_tab,
+            replace,
+        });
+        if let Err(error) = self.validate_install_graph(&candidates) {
+            self.report_reload_failure(id, Some(request_id), &error);
+            return;
+        }
+        let new_count = candidates
+            .iter()
+            .filter(|candidate| !self.active.contains_key(&candidate.id) || candidate.replace)
+            .count();
+        if self.next_generation.checked_add(new_count as u64).is_none() {
+            self.report_reload_failure(id, Some(request_id), "generation counter exhausted");
+            return;
+        }
+        for candidate in candidates {
+            if self.active.contains_key(&candidate.id) && !candidate.replace {
+                continue;
+            }
+            let Some(generation) = self.allocate_generation(&candidate.id, request_id) else {
+                unreachable!("generation range was prevalidated")
+            };
+            self.activate_script(
+                candidate.id,
+                candidate.ast,
+                candidate.callbacks,
+                candidate.on_run,
+                candidate.capabilities,
+                candidate.version,
+                candidate.requires,
+                candidate.conflicts,
+                candidate.workbench_tab,
+                candidate.replace,
+                request_id,
+                generation,
+            );
+        }
+    }
+
+    fn validate_install_graph(&self, candidates: &[InstallCandidate]) -> Result<(), String> {
+        let mut by_id = BTreeMap::new();
+        for candidate in candidates {
+            if by_id.insert(candidate.id.clone(), candidate).is_some() {
+                return Err(format!(
+                    "dependency graph contains duplicate package {}",
+                    candidate.id
+                ));
+            }
+            if let Some(active) = self.active.get(&candidate.id) {
+                if candidate.replace {
+                    continue;
+                }
+                if active.version.0 != candidate.version.0 {
+                    return Err(format!(
+                        "active dependency {} is version {}, prepared package is {}",
+                        candidate.id, active.version.0, candidate.version.0
+                    ));
+                }
+            }
+        }
+        for candidate in candidates {
+            if candidate.id == candidates.last().expect("root is last").id {
+                if self.active.contains_key(&candidate.id) && !candidate.replace {
+                    return Err(format!(
+                        "package {} is already loaded; use reload",
+                        candidate.id
+                    ));
+                }
+            } else if self.active.contains_key(&candidate.id) {
+                continue;
+            }
+            for requirement in &candidate.requires {
+                match requirement.kind {
+                    super::package::PackageRequirementKind::HostApi => {
+                        let available = super::package_graph::host_api_version(&requirement.id)
+                            .is_some_and(|version| requirement.version.matches(&version));
+                        if !available && !requirement.optional {
+                            return Err(format!(
+                                "package {} requires unavailable host API {} {}",
+                                candidate.id, requirement.id, requirement.version
+                            ));
+                        }
+                    }
+                    super::package::PackageRequirementKind::Package => {
+                        let dependency = ScriptId::parse(requirement.id.clone())
+                            .map_err(|_| "invalid package dependency ID".to_owned())?;
+                        let active_version =
+                            self.active.get(&dependency).map(|script| &script.version.0);
+                        let prepared_version =
+                            by_id.get(&dependency).map(|script| &script.version.0);
+                        let version = active_version.or(prepared_version);
+                        if !requirement.optional
+                            && !version.is_some_and(|version| requirement.version.matches(version))
+                        {
+                            return Err(format!(
+                                "package {} requires {} {}, but no compatible active or prepared package is available",
+                                candidate.id, requirement.id, requirement.version
+                            ));
+                        }
+                    }
+                }
+            }
+            for conflict in &candidate.conflicts {
+                let conflict_id = ScriptId::parse(conflict.id.clone())
+                    .map_err(|_| "invalid package conflict ID".to_owned())?;
+                let active_version = self
+                    .active
+                    .get(&conflict_id)
+                    .map(|script| &script.version.0);
+                let prepared_version = by_id.get(&conflict_id).map(|script| &script.version.0);
+                if active_version
+                    .or(prepared_version)
+                    .is_some_and(|version| conflict.version.matches(version))
+                {
+                    return Err(format!(
+                        "package {} conflicts with {}",
+                        candidate.id, conflict.id
+                    ));
+                }
+            }
+            for (active_id, active) in &self.active {
+                if active_id == &candidate.id && candidate.replace {
+                    continue;
+                }
+                if active.conflicts.iter().any(|conflict| {
+                    conflict.id == candidate.id.as_str()
+                        && conflict.version.matches(&candidate.version.0)
+                }) {
+                    return Err(format!(
+                        "active package {active_id} conflicts with {}",
+                        candidate.id
+                    ));
+                }
+                if active.requires.iter().any(|requirement| {
+                    requirement.kind == super::package::PackageRequirementKind::Package
+                        && !requirement.optional
+                        && requirement.id == candidate.id.as_str()
+                        && !requirement.version.matches(&candidate.version.0)
+                }) {
+                    return Err(format!(
+                        "active dependent {active_id} requires a different version of {}",
+                        candidate.id
+                    ));
+                }
+            }
+        }
+        let added = candidates
+            .iter()
+            .filter(|candidate| !self.active.contains_key(&candidate.id))
+            .count();
+        if self.active.len() + added > MAX_ACTIVE_SCRIPTS {
+            return Err("active script limit reached for dependency graph".into());
+        }
+        Ok(())
     }
 
     fn is_latest_load(&self, id: &ScriptId, request_id: u64) -> bool {
         self.load_requests
             .get(id)
             .is_some_and(|load| load.request_id == request_id)
-    }
-
-    fn can_install(&mut self, id: &ScriptId, replace: bool, request_id: u64) -> bool {
-        if !replace && self.active.contains_key(id) {
-            self.report_reload_failure(
-                id.clone(),
-                Some(request_id),
-                "load rejected: script already loaded; use reload",
-            );
-            return false;
-        }
-        if !self.active.contains_key(id) && self.active.len() >= MAX_ACTIVE_SCRIPTS {
-            self.report_reload_failure(id.clone(), Some(request_id), "active script limit reached");
-            return false;
-        }
-        true
     }
 
     fn allocate_generation(&mut self, id: &ScriptId, request_id: u64) -> Option<ScriptGeneration> {
@@ -638,12 +906,19 @@ impl ScriptManager {
         callbacks: BTreeMap<ScriptPhaseId, String>,
         on_run: Option<String>,
         capabilities: Vec<String>,
+        version: super::package::PackageVersion,
+        requires: Vec<super::package::PackageRequirement>,
+        conflicts: Vec<super::package::PackageConflict>,
+        workbench_tab: Option<super::package::WorkbenchTabMetadata>,
         replace: bool,
         request_id: u64,
         generation: ScriptGeneration,
     ) {
         self.cancel_runs(&id);
         self.raycast_tickets.remove_owner(&id);
+        self.panel_publications.remove(&id);
+        self.pending_panel_events
+            .retain(|event| event.script_id != id);
         let mut scope = Scope::new();
         scope.push("state", Map::new());
         let auto_reload = self
@@ -662,6 +937,10 @@ impl ScriptManager {
             ActiveScript {
                 ast,
                 capabilities,
+                version,
+                requires,
+                conflicts,
+                workbench_tab: workbench_tab.clone(),
                 scope,
                 generation,
                 callbacks,
@@ -671,6 +950,15 @@ impl ScriptManager {
                 reload_error: None,
                 latest_load_request_id,
                 deferred_auto_reload,
+            },
+        );
+        self.panel_publications.insert(
+            id.clone(),
+            ScriptPanelPublication {
+                script_id: id.clone(),
+                generation,
+                workbench_tab,
+                panels: Vec::new(),
             },
         );
         self.report_request(
@@ -683,8 +971,38 @@ impl ScriptManager {
     }
 
     fn unload_script(&mut self, id: ScriptId, request_id: Option<u64>) {
+        if let Some(target) = self.active.get(&id) {
+            let dependents = self
+                .active
+                .iter()
+                .filter(|(dependent_id, _)| *dependent_id != &id)
+                .filter(|(_, script)| {
+                    script.requires.iter().any(|requirement| {
+                        requirement.kind == super::package::PackageRequirementKind::Package
+                            && !requirement.optional
+                            && requirement.id == id.as_str()
+                            && requirement.version.matches(&target.version.0)
+                    })
+                })
+                .map(|(dependent_id, _)| dependent_id.as_str().to_owned())
+                .collect::<Vec<_>>();
+            if !dependents.is_empty() {
+                self.report_failure(
+                    id,
+                    request_id,
+                    &format!(
+                        "unload blocked; required by active packages: {}",
+                        dependents.join(", ")
+                    ),
+                );
+                return;
+            }
+        }
         self.cancel_runs(&id);
         self.raycast_tickets.remove_owner(&id);
+        self.panel_publications.remove(&id);
+        self.pending_panel_events
+            .retain(|event| event.script_id != id);
         let generation = self
             .active
             .remove(&id)
@@ -763,6 +1081,7 @@ impl ScriptManager {
         mut event: ScriptEvent,
         intent_id: u64,
         result: crate::api::ecs::IntentResult,
+        source_module: &str,
     ) {
         event.kind = if result == crate::api::ecs::IntentResult::Applied {
             ScriptEventKind::Status
@@ -770,12 +1089,44 @@ impl ScriptManager {
             ScriptEventKind::Error
         };
         event.text = format!("vehicle velocity intent {intent_id}: {result:?}");
-        self.events.emit(event);
+        self.events.emit_from_rust_module(event, source_module);
     }
     pub(crate) fn report_effect_cancelled(&self, mut event: ScriptEvent) {
         event.kind = ScriptEventKind::Status;
         event.text = "Cancelled".to_owned();
         self.events.emit(event);
+    }
+    pub(crate) fn report_spawn_result(
+        &self,
+        mut event: ScriptEvent,
+        catalog_id: Option<&str>,
+        request_id: u64,
+        native_id: Option<crate::api::game::abi::types::HashId>,
+        result: crate::api::ecs::SpawnRequestResult,
+        source_module: &str,
+    ) {
+        use crate::api::ecs::SpawnRequestResult as Result;
+
+        event.kind = match result {
+            Result::NativeCallSubmitted | Result::SpawnObserved => ScriptEventKind::Status,
+            _ => ScriptEventKind::Error,
+        };
+        let item = catalog_id.unwrap_or("unknown catalog item");
+        let native = native_id
+            .map(|id| format!(" | native {:08X}", id.raw()))
+            .unwrap_or_default();
+        let stage = match result {
+            Result::NativeCallSubmitted => "submitted; awaiting game observation",
+            Result::SpawnObserved => "spawn observed",
+            Result::SpawnFailedObserved => "game reported spawn failure",
+            other => {
+                event.text = format!("SPAWN: {item} | {other:?} | request {request_id}{native}");
+                self.events.emit_from_rust_module(event, source_module);
+                return;
+            }
+        };
+        event.text = format!("SPAWN: {item} | {stage} | request {request_id}{native}");
+        self.events.emit_from_rust_module(event, source_module);
     }
     pub(crate) fn dispatch(
         &mut self,
@@ -785,10 +1136,15 @@ impl ScriptManager {
         Vec<VehicleVelocityEffect>,
         Vec<ScriptDebugDrawEffect>,
         Vec<ScriptRaycastRequest>,
+        Vec<ScriptSpawnEffect>,
+        Vec<ScriptPanelPublication>,
     ) {
         let mut effects = Vec::new();
         let mut debug_draws: Vec<ScriptDebugDrawEffect> = Vec::new();
         let mut raycasts = Vec::new();
+        let mut spawns = Vec::new();
+        let mut panel_updates = Vec::new();
+        let mut panel_events = std::mem::take(&mut self.pending_panel_events);
         self.raycast_tickets.expire(snapshot.callback_sequence);
         let capacity = available_slots.min(MAX_VELOCITY_EFFECTS_PER_PHASE);
         self.dispatch_queued_runs(
@@ -797,6 +1153,8 @@ impl ScriptManager {
             &mut effects,
             &mut debug_draws,
             &mut raycasts,
+            &mut spawns,
+            &mut panel_updates,
         );
         self.dispatch_frame_callbacks(
             snapshot,
@@ -804,8 +1162,12 @@ impl ScriptManager {
             &mut effects,
             &mut debug_draws,
             &mut raycasts,
+            &mut spawns,
+            &mut panel_events,
+            &mut panel_updates,
         );
         self.retain_current_effects(&mut effects, &mut debug_draws);
+        spawns.retain(|effect| self.retain_effect(&effect.origin));
         raycasts.retain(|request| {
             if self.effect_is_current(&request.source) {
                 true
@@ -815,7 +1177,106 @@ impl ScriptManager {
                 false
             }
         });
-        (effects, debug_draws, raycasts)
+        for update in panel_updates {
+            let mut update = update;
+            update.workbench_tab = self
+                .active
+                .get(&update.script_id)
+                .filter(|script| script.generation == update.generation)
+                .and_then(|script| script.workbench_tab.clone());
+            self.panel_publications
+                .insert(update.script_id.clone(), update);
+        }
+        self.panel_publications.retain(|id, publication| {
+            self.active.get(id).is_some_and(|script| {
+                script.status == ScriptStatus::Active && script.generation == publication.generation
+            })
+        });
+        (
+            effects,
+            debug_draws,
+            raycasts,
+            spawns,
+            self.panel_publications.values().cloned().collect(),
+        )
+    }
+
+    pub(crate) fn receive_panel_event(&mut self, event: ScriptPanelEvent) {
+        if !self.active.get(&event.script_id).is_some_and(|script| {
+            script.generation == event.generation
+                && script.status == ScriptStatus::Active
+                && script
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability == "ui.panels")
+        }) {
+            return;
+        }
+        let catalog_selection = event.script_id.as_str() == "debug_spawn_menu"
+            && event.panel_id == "spawn_workbench"
+            && event.widget_id == "catalog_selection"
+            && self
+                .panel_publications
+                .get(&event.script_id)
+                .is_some_and(|publication| {
+                    publication.generation == event.generation
+                        && publication
+                            .panels
+                            .iter()
+                            .any(|panel| panel.id == event.panel_id)
+                })
+            && matches!(&event.value, ScriptPanelValue::Text(catalog_id)
+                if crate::api::scripts::spawn_catalog::is_spawnable(catalog_id));
+        let valid_event = catalog_selection
+            || self
+                .panel_publications
+                .get(&event.script_id)
+                .filter(|publication| publication.generation == event.generation)
+                .and_then(|publication| {
+                    publication
+                        .panels
+                        .iter()
+                        .find(|panel| panel.id == event.panel_id)
+                })
+                .and_then(|panel| {
+                    panel
+                        .widgets
+                        .iter()
+                        .find(|widget| widget.id == event.widget_id)
+                })
+                .is_some_and(|widget| match (&widget.kind, &event.value) {
+                    (ScriptPanelWidgetKind::Checkbox { .. }, ScriptPanelValue::Bool(_)) => true,
+                    (ScriptPanelWidgetKind::Status { .. }, _) => false,
+                    (ScriptPanelWidgetKind::Button { .. }, ScriptPanelValue::Bool(true)) => true,
+                    (
+                        ScriptPanelWidgetKind::Slider { min, max, .. },
+                        ScriptPanelValue::Number(value),
+                    )
+                    | (
+                        ScriptPanelWidgetKind::Number { min, max, .. },
+                        ScriptPanelValue::Number(value),
+                    ) => value.is_finite() && value >= min && value <= max,
+                    (
+                        ScriptPanelWidgetKind::Select { options, .. },
+                        ScriptPanelValue::Text(value),
+                    ) => options.iter().any(|option| option == value),
+                    _ => false,
+                });
+        if !valid_event {
+            return;
+        }
+        if self.pending_panel_events.len() >= super::PANEL_EVENT_QUEUE_CAPACITY {
+            if let Some(existing) = self.pending_panel_events.iter_mut().find(|existing| {
+                existing.script_id == event.script_id
+                    && existing.generation == event.generation
+                    && existing.panel_id == event.panel_id
+                    && existing.widget_id == event.widget_id
+            }) {
+                *existing = event;
+            }
+            return;
+        }
+        self.pending_panel_events.push(event);
     }
 
     pub(crate) fn complete_script_raycast(&mut self, result: ScriptRaycastCompletion) -> bool {
@@ -837,12 +1298,19 @@ impl ScriptManager {
         effects: &mut Vec<VehicleVelocityEffect>,
         debug_draws: &mut Vec<ScriptDebugDrawEffect>,
         raycasts: &mut Vec<ScriptRaycastRequest>,
+        spawns: &mut Vec<ScriptSpawnEffect>,
+        panel_updates: &mut Vec<ScriptPanelPublication>,
     ) {
         let mut runs = std::mem::take(&mut self.runs);
         runs.sort_by(|a, b| a.0.cmp(&b.0));
         let engine = &self.engine;
         let events = &self.events;
         let raycast_tickets = self.raycast_tickets.clone();
+        let active_versions = self
+            .active
+            .iter()
+            .map(|(id, script)| (id.clone(), script.version.0.clone()))
+            .collect::<BTreeMap<_, _>>();
         // One-shot requests run before recurring callbacks; duplicate requests remain distinct.
         for (id, generation, request_id) in runs {
             let Some(script) = self.active.get_mut(&id) else {
@@ -870,6 +1338,10 @@ impl ScriptManager {
                 raycast_tickets.has_capacity(),
                 raycast_tickets.clone(),
                 raycasts,
+                spawns,
+                dependency_availability(&script.requires, &active_versions),
+                &[],
+                panel_updates,
             );
         }
     }
@@ -881,14 +1353,23 @@ impl ScriptManager {
         effects: &mut Vec<VehicleVelocityEffect>,
         debug_draws: &mut Vec<ScriptDebugDrawEffect>,
         raycasts: &mut Vec<ScriptRaycastRequest>,
+        spawns: &mut Vec<ScriptSpawnEffect>,
+        panel_events: &mut Vec<ScriptPanelEvent>,
+        panel_updates: &mut Vec<ScriptPanelPublication>,
     ) {
         let engine = &self.engine;
         let events = &self.events;
         let raycast_tickets = self.raycast_tickets.clone();
+        let active_versions = self
+            .active
+            .iter()
+            .map(|(id, script)| (id.clone(), script.version.0.clone()))
+            .collect::<BTreeMap<_, _>>();
         for (id, script) in &mut self.active {
             let Some(function) = script.callbacks.get(&ScriptPhaseId::GamePostSim).cloned() else {
                 continue;
             };
+            let invocation_events = take_panel_events(panel_events, id, script.generation);
             invocation::invoke(
                 engine,
                 events,
@@ -905,6 +1386,10 @@ impl ScriptManager {
                 raycast_tickets.has_capacity(),
                 raycast_tickets.clone(),
                 raycasts,
+                spawns,
+                dependency_availability(&script.requires, &active_versions),
+                invocation_events.as_slice(),
+                panel_updates,
             );
         }
     }

@@ -1,14 +1,14 @@
 //! Debounced content observation for opt-in script file watching.
 //!
-//! The loader watches only a package's manifest and main source file. A change
-//! is reported after the same content fingerprint appears in consecutive
+//! The loader watches a package's manifest and every declared source file. A
+//! change is reported after the same content fingerprint appears in consecutive
 //! polls; the accepted bytes travel with the notice so a later save cannot
 //! silently change which version is compiled. This is change detection, not a
 //! security or authenticity mechanism.
 use super::ScriptId;
 use std::collections::BTreeMap;
 
-/// Content fingerprint for a package's manifest and main source.
+/// Content fingerprint for a package's manifest and declared sources.
 ///
 /// `None` distinguishes a missing or unreadable file from an empty file;
 /// `Some` represents the complete file contents. This non-cryptographic value
@@ -16,23 +16,40 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageFingerprint {
     manifest: Option<u64>,
-    main: Option<u64>,
+    sources: BTreeMap<String, Option<u64>>,
 }
 
 impl PackageFingerprint {
-    /// Fingerprint the optional complete contents of both package files.
+    /// Fingerprint a legacy single-file package's manifest and main source.
     ///
     /// Each input should be bounded by the package loader's size limits before
     /// hashing. The result is stable for identical byte sequences in this build.
     pub fn from_contents(manifest: Option<&[u8]>, main: Option<&[u8]>) -> Self {
+        let mut sources = BTreeMap::new();
+        sources.insert("main.rhai".to_owned(), main.map(<[u8]>::to_vec));
+        Self::from_package_contents(manifest, &sources)
+    }
+
+    /// Fingerprint the manifest and every declared source file, including missing files.
+    pub fn from_package_contents(
+        manifest: Option<&[u8]>,
+        sources: &BTreeMap<String, Option<Vec<u8>>>,
+    ) -> Self {
         Self {
             manifest: manifest.map(content_hash),
-            main: main.map(content_hash),
+            sources: sources
+                .iter()
+                .map(|(path, contents)| (path.clone(), contents.as_deref().map(content_hash)))
+                .collect(),
         }
     }
 
-    pub(crate) fn matches_contents(&self, manifest: Option<&[u8]>, main: Option<&[u8]>) -> bool {
-        self == &Self::from_contents(manifest, main)
+    pub(crate) fn matches_contents(
+        &self,
+        manifest: Option<&[u8]>,
+        sources: &BTreeMap<String, Option<Vec<u8>>>,
+    ) -> bool {
+        self == &Self::from_package_contents(manifest, sources)
     }
 }
 
@@ -45,17 +62,24 @@ impl PackageFingerprint {
 pub struct AutoReloadSnapshot {
     pub(crate) fingerprint: PackageFingerprint,
     pub(crate) manifest: Option<Vec<u8>>,
-    pub(crate) main: Option<Vec<u8>>,
+    pub(crate) sources: BTreeMap<String, Option<Vec<u8>>>,
 }
 
 impl AutoReloadSnapshot {
-    pub(crate) fn new(manifest: Option<Vec<u8>>, main: Option<Vec<u8>>) -> Self {
-        let fingerprint = PackageFingerprint::from_contents(manifest.as_deref(), main.as_deref());
+    pub(crate) fn new(
+        manifest: Option<Vec<u8>>,
+        sources: BTreeMap<String, Option<Vec<u8>>>,
+    ) -> Self {
+        let fingerprint = PackageFingerprint::from_package_contents(manifest.as_deref(), &sources);
         Self {
             fingerprint,
             manifest,
-            main,
+            sources,
         }
+    }
+
+    pub(crate) fn has_all_sources(&self) -> bool {
+        !self.sources.is_empty() && self.sources.values().all(Option::is_some)
     }
 }
 

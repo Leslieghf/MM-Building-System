@@ -1,13 +1,188 @@
 //! ImGui panel composition for input, scripts, console, and copied telemetry.
 //!
 //! Widgets read prepared UI state and submit typed UI requests. They do not
-//! call the game adapter or execute Rhai code. ANSI-like console styling is
-//! parsed as bounded presentation text by [`console_text`]; the renderer does
-//! not interpret arbitrary terminal control sequences.
-#[path = "panel/console_text.rs"]
-mod console_text;
+//! call the game adapter or execute Rhai code.
 use super::*;
-use console_text::{console_plain_text, draw_ansi_text};
+#[path = "panel/console_text.rs"]
+pub(super) mod console_text;
+
+pub(super) fn strip_console_ansi(text: &str) -> String {
+    console_text::console_plain_text(text)
+}
+
+pub(super) fn draw_script_panels(
+    runtime: &mut super::UiRuntime,
+    ui: &imgui::Ui,
+    preferences: &crate::devtools::state::UiPreferences,
+) {
+    let mut open_values = {
+        let mut state = runtime
+            .app
+            .world_mut()
+            .resource_mut::<crate::devtools::state::ScriptPanelsUiState>();
+        std::mem::take(&mut state.open)
+    };
+    let mut changed_events = Vec::new();
+    {
+        let state = runtime
+            .app
+            .world()
+            .resource::<crate::devtools::state::ScriptPanelsUiState>();
+        for publication in &state.publications {
+            for panel in &publication.panels {
+                // Workbench package panels render inside their registered tab.
+                if publication.workbench_tab.is_some()
+                    || (publication.script_id.as_str() == "debug_spawn_menu"
+                        && panel.id == "spawn_workbench")
+                {
+                    continue;
+                }
+                let key = (publication.script_id.clone(), panel.id.clone());
+                let is_open = open_values.entry(key.clone()).or_insert(true);
+                if !*is_open {
+                    continue;
+                }
+                let title = format!(
+                    "{}  [{}]###script_panel_{}_{}",
+                    panel.title,
+                    publication.script_id.as_str(),
+                    publication.script_id.as_str(),
+                    panel.id
+                );
+                let mut open = true;
+                let background = ui.push_style_color(
+                    imgui::StyleColor::WindowBg,
+                    [0.055, 0.075, 0.105, preferences.ui_opacity],
+                );
+                let frame =
+                    ui.push_style_color(imgui::StyleColor::FrameBg, [0.10, 0.15, 0.21, 1.0]);
+                let button =
+                    ui.push_style_color(imgui::StyleColor::Button, [0.15, 0.33, 0.48, 1.0]);
+                let header =
+                    ui.push_style_color(imgui::StyleColor::Header, [0.15, 0.33, 0.48, 1.0]);
+                let title_style =
+                    ui.push_style_color(imgui::StyleColor::TitleBg, [0.08, 0.20, 0.31, 1.0]);
+                let title_active =
+                    ui.push_style_color(imgui::StyleColor::TitleBgActive, [0.12, 0.30, 0.45, 1.0]);
+                ui.window(&title)
+                    .opened(&mut open)
+                    .position(
+                        [ui.io().display_size[0] - 430.0, 18.0],
+                        imgui::Condition::FirstUseEver,
+                    )
+                    .size([410.0, 620.0], imgui::Condition::FirstUseEver)
+                    .size_constraints([320.0, 220.0], [f32::MAX, f32::MAX])
+                    .flags(
+                        imgui::WindowFlags::NO_SAVED_SETTINGS
+                            | imgui::WindowFlags::NO_COLLAPSE
+                            | if preferences.captures_game_input() {
+                                imgui::WindowFlags::empty()
+                            } else {
+                                imgui::WindowFlags::NO_INPUTS
+                            },
+                    )
+                    .build(|| {
+                        for widget in &panel.widgets {
+                            if let Some(value) = draw_script_widget(ui, widget) {
+                                changed_events.push(crate::api::scripts::ScriptPanelEvent {
+                                    script_id: publication.script_id.clone(),
+                                    generation: publication.generation,
+                                    panel_id: panel.id.clone(),
+                                    widget_id: widget.id.clone(),
+                                    value,
+                                });
+                            }
+                        }
+                    });
+                drop((title_active, title_style, header, button, frame, background));
+                *is_open = open;
+            }
+        }
+    }
+    runtime
+        .app
+        .world_mut()
+        .resource_mut::<crate::devtools::state::ScriptPanelsUiState>()
+        .open = open_values;
+    for event in changed_events {
+        let _ = runtime.endpoint.script_panel_events_tx.try_send(event);
+    }
+}
+
+pub(super) fn draw_script_widget(
+    ui: &imgui::Ui,
+    widget: &crate::api::scripts::ScriptPanelWidget,
+) -> Option<crate::api::scripts::ScriptPanelValue> {
+    use crate::api::scripts::{ScriptPanelValue as Value, ScriptPanelWidgetKind as Kind};
+    match &widget.kind {
+        Kind::Heading { text } => {
+            section_header(ui, text);
+            None
+        }
+        Kind::Label { text } => {
+            ui.text(text);
+            None
+        }
+        Kind::Status { text, level } => {
+            ui.text_colored(level.color(), text);
+            None
+        }
+        Kind::Checkbox { label: text, value } => {
+            let mut value = *value;
+            ui.checkbox(format!("{text}##{}", widget.id), &mut value)
+                .then_some(Value::Bool(value))
+        }
+        Kind::Slider {
+            label: text,
+            value,
+            min,
+            max,
+        } => {
+            let mut value = *value as f32;
+            let changed = ui
+                .slider_config(format!("{text}##{}", widget.id), *min as f32, *max as f32)
+                .display_format("%.3f")
+                .build(&mut value);
+            changed.then_some(Value::Number(f64::from(value)))
+        }
+        Kind::Number {
+            label: text,
+            value,
+            min,
+            max,
+            step,
+        } => {
+            let mut value = (*value as f32).clamp(*min as f32, *max as f32);
+            let changed = ui
+                .input_float(format!("{text}##{}", widget.id), &mut value)
+                .step(*step as f32)
+                .build();
+            if changed && value.is_finite() {
+                Some(Value::Number(f64::from(
+                    value.clamp(*min as f32, *max as f32),
+                )))
+            } else {
+                None
+            }
+        }
+        Kind::Select {
+            label: text,
+            value,
+            options,
+        } => {
+            let mut selected = options
+                .iter()
+                .position(|option| option == value)
+                .unwrap_or(0);
+            let changed =
+                ui.combo_simple_string(format!("{text}##{}", widget.id), &mut selected, options);
+            changed.then(|| Value::Text(options[selected].clone()))
+        }
+        Kind::Button { label: text } => ui
+            .button(format!("{text}##{}", widget.id))
+            .then_some(Value::Bool(true)),
+    }
+}
 
 pub(super) fn sample_input_key(ui: &imgui::Ui, key: imgui::Key) -> bool {
     match key {
@@ -73,6 +248,7 @@ pub(super) fn draw_dev_tools(
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
     discovery: &crate::api::scripts::loader::ScriptDiscoveryRequester,
+    panels: &mut crate::devtools::state::ScriptPanelsUiState,
     capture_input: bool,
     ui_opacity: f32,
 ) -> bool {
@@ -112,7 +288,7 @@ pub(super) fn draw_dev_tools(
                     state.initial_scan_started = true;
                     request_discovery(state, discovery);
                 }
-                draw_scripts_tab(ui, state, output, sender, discovery);
+                draw_scripts_tab(ui, state, output, sender, discovery, panels);
             }
         });
     drop((header, button, frame, background));
@@ -125,43 +301,36 @@ pub(super) fn draw_console_tab(
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
 ) {
+    let _window_padding = ui.push_style_var(imgui::StyleVar::WindowPadding([5.0, 5.0]));
+    let _frame_padding = ui.push_style_var(imgui::StyleVar::FramePadding([3.0, 2.0]));
+    let _item_spacing = ui.push_style_var(imgui::StyleVar::ItemSpacing([4.0, 3.0]));
     ui.child_window("console_tab").size([0.0, 0.0]).build(|| {
+        ui.set_window_font_scale(0.90);
         draw_console_controls(ui, state, output);
-        draw_console_output(ui, state, output);
+        draw_console_output(ui, state);
         draw_console_prompt(ui, state, output, sender);
-        ui.text_disabled(
-            "Click a transcript row or press Ctrl+C to copy; Up/Down navigates history.",
-        );
+        ui.set_window_font_scale(1.0);
     });
+    drop((_window_padding, _frame_padding, _item_spacing));
 }
 
 fn draw_console_controls(ui: &imgui::Ui, state: &mut ScriptConsoleUiState, output: &ConsoleOutput) {
+    state.refresh_transcript(output);
     ui.checkbox("Follow output", &mut state.follow_output);
     ui.same_line();
-    ui.checkbox("Wrap long lines", &mut state.wrap_console_lines);
-    ui.same_line();
-    ui.text_disabled(format!(
-        "{} / {} events",
-        output.events().len(),
-        crate::api::scripts::console::MAX_SCROLLBACK_ENTRIES
-    ));
+    ui.text_disabled(format!("{} events", output.events().len(),));
 }
 
-fn draw_console_output(ui: &imgui::Ui, state: &mut ScriptConsoleUiState, output: &ConsoleOutput) {
+fn draw_console_output(ui: &imgui::Ui, state: &mut ScriptConsoleUiState) {
     let height = (ui.content_region_avail()[1] - ui.frame_height_with_spacing() * 2.0).max(60.0);
     ui.child_window("console_output")
         .size([0.0, height])
-        .horizontal_scrollbar(!state.wrap_console_lines)
+        .horizontal_scrollbar(true)
         .border(true)
-        .build(|| draw_console_transcript_view(ui, state, output));
+        .build(|| draw_console_transcript_view(ui, state));
 }
 
-fn draw_console_transcript_view(
-    ui: &imgui::Ui,
-    state: &mut ScriptConsoleUiState,
-    output: &ConsoleOutput,
-) {
-    let _wrap = state.wrap_console_lines.then(|| ui.push_text_wrap_pos());
+fn draw_console_transcript_view(ui: &imgui::Ui, state: &mut ScriptConsoleUiState) {
     if state.restore_scroll {
         ui.set_scroll_y(state.scroll_y);
         state.restore_scroll = false;
@@ -171,19 +340,17 @@ fn draw_console_transcript_view(
     {
         state.follow_output = false;
     }
-    draw_console_transcript(
-        ui,
-        output.events(),
-        &mut state.selected_console_text,
-        state.wrap_console_lines,
-    );
-    if ui.is_window_focused()
-        && ui.io().key_ctrl
-        && ui.is_key_pressed_no_repeat(imgui::Key::C)
-        && let Some(selected) = state.selected_console_text.as_deref()
-    {
-        ui.set_clipboard_text(selected);
-    }
+    let line_height = ui.text_line_height_with_spacing();
+    let transcript_height = (state.transcript_text.lines().count().max(1) as f32 * line_height)
+        .max(ui.text_line_height_with_spacing());
+    ui.input_text_multiline(
+        "##console_transcript_text",
+        &mut state.transcript_text,
+        [ui.content_region_avail()[0], transcript_height],
+    )
+    .read_only(true)
+    .flags(imgui::InputTextFlags::ALLOW_TAB_INPUT)
+    .build();
     if state.follow_output {
         ui.set_scroll_here_y_with_ratio(1.0);
     }
@@ -282,13 +449,14 @@ pub(super) fn draw_scripts_tab(
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
     discovery: &crate::api::scripts::loader::ScriptDiscoveryRequester,
+    panels: &mut crate::devtools::state::ScriptPanelsUiState,
 ) {
     // Keep tab chrome in the parent Dev Tools window while Scripts content
     // scrolls independently inside the available tab viewport.
     ui.child_window("scripts_tab")
         .size([0.0, 0.0])
         .border(false)
-        .build(|| draw_scripts_tab_contents(ui, state, output, sender, discovery));
+        .build(|| draw_scripts_tab_contents(ui, state, output, sender, discovery, panels));
 }
 
 pub(super) fn draw_scripts_tab_contents(
@@ -297,11 +465,48 @@ pub(super) fn draw_scripts_tab_contents(
     output: &mut ConsoleOutput,
     sender: &mut ConsoleRequestSender,
     discovery: &crate::api::scripts::loader::ScriptDiscoveryRequester,
+    panels: &mut crate::devtools::state::ScriptPanelsUiState,
 ) {
+    draw_script_panel_list(ui, panels);
+    ui.separator();
     draw_package_controls(ui, state, discovery);
     draw_package_list(ui, state);
     draw_selected_package(ui, state, output, sender);
     draw_loaded_runtime(ui, state, output, sender);
+}
+
+fn draw_script_panel_list(
+    ui: &imgui::Ui,
+    panels: &mut crate::devtools::state::ScriptPanelsUiState,
+) {
+    ui.text("Script panels");
+    let mut rows = Vec::new();
+    for publication in &panels.publications {
+        for panel in &publication.panels {
+            rows.push((
+                publication.script_id.clone(),
+                panel.id.clone(),
+                panel.title.clone(),
+                panels
+                    .open
+                    .get(&(publication.script_id.clone(), panel.id.clone()))
+                    .copied()
+                    .unwrap_or(true),
+            ));
+        }
+    }
+    if rows.is_empty() {
+        ui.text_disabled("No script panels published.");
+    }
+    for (script_id, panel_id, title, is_open) in rows {
+        ui.text(format!("{title}  [{}]", script_id.as_str()));
+        if !is_open {
+            ui.same_line();
+            if ui.small_button(format!("Open##{}_{}", script_id.as_str(), panel_id)) {
+                panels.reopen(&script_id, &panel_id);
+            }
+        }
+    }
 }
 
 fn draw_package_controls(
@@ -367,7 +572,21 @@ fn draw_selected_package(
     {
         ui.separator();
         if let Some(manifest) = &row.manifest {
-            ui.text(format!("API v{}", manifest.api_version));
+            ui.text(format!(
+                "Package v{} · API v{}",
+                manifest.version, manifest.api_version
+            ));
+            match &manifest.dependency_state {
+                crate::api::scripts::package::DependencyState::Ready => {
+                    ui.text_colored([0.32, 0.82, 0.48, 1.0], "Dependencies: ready");
+                }
+                crate::api::scripts::package::DependencyState::OptionalUnavailable(message) => {
+                    ui.text_colored([0.96, 0.74, 0.26, 1.0], format!("Dependencies: {message}"));
+                }
+                crate::api::scripts::package::DependencyState::Blocked(message) => {
+                    ui.text_colored([0.94, 0.36, 0.34, 1.0], format!("Dependencies: {message}"));
+                }
+            }
             ui.text_wrapped(format!("Callbacks: {}", manifest.callbacks.join(", ")));
             ui.text_wrapped(format!(
                 "Capabilities: {}",
@@ -377,6 +596,15 @@ fn draw_selected_package(
                     manifest.capabilities.join(", ")
                 }
             ));
+            if !manifest.requires.is_empty() {
+                ui.text_wrapped(format!("Requires: {}", manifest.requires.join(", ")));
+            }
+            if !manifest.conflicts.is_empty() {
+                ui.text_wrapped(format!("Conflicts: {}", manifest.conflicts.join(", ")));
+            }
+            if let Some(tab) = &manifest.workbench_tab {
+                ui.text_wrapped(format!("Workbench tab: {} ({})", tab.title, tab.id));
+            }
         }
         if let Some(issue) = &row.issue {
             ui.text_colored([1.0, 0.48, 0.45, 1.0], format!("Invalid: {issue}"));
@@ -387,7 +615,13 @@ fn draw_selected_package(
                 .iter()
                 .find(|item| &item.id == id)
                 .map(|item| (item.status, item.generation));
-            let valid = row.issue.is_none() && row.manifest.is_some();
+            let dependencies_ready = row.manifest.as_ref().is_some_and(|manifest| {
+                !matches!(
+                    &manifest.dependency_state,
+                    crate::api::scripts::package::DependencyState::Blocked(_)
+                )
+            });
+            let valid = row.issue.is_none() && row.manifest.is_some() && dependencies_ready;
             ui.separator();
             if valid && loaded.is_none() && ui.button("Load") {
                 issue_lifecycle(state, output, sender, "load", id);
@@ -712,251 +946,6 @@ pub(super) fn bound_key_just_pressed(ui: &imgui::Ui, key: u32) -> bool {
         imgui::Key::MouseX1 => ui.is_mouse_clicked(imgui::MouseButton::Extra1),
         imgui::Key::MouseX2 => ui.is_mouse_clicked(imgui::MouseButton::Extra2),
         _ => ui.is_key_pressed_no_repeat(key),
-    }
-}
-
-pub(super) fn draw_console_event(
-    ui: &imgui::Ui,
-    event: &crate::api::scripts::console::ConsoleEvent,
-    selected_text: &mut Option<String>,
-    wrap_lines: bool,
-) {
-    let color = match event.severity {
-        ConsoleSeverity::Info => [0.78, 0.86, 0.93, 1.0],
-        ConsoleSeverity::Warning => [0.98, 0.78, 0.36, 1.0],
-        ConsoleSeverity::Error => [1.0, 0.48, 0.45, 1.0],
-    };
-    let text = console_plain_text(&event.text);
-    let position = ui.cursor_screen_pos();
-    let width = ui.content_region_avail()[0];
-    let wrap_width = if wrap_lines { width } else { -1.0 };
-    let text_size = ui.calc_text_size_with_opts(&text, false, wrap_width);
-    let row_height = text_size[1].max(ui.text_line_height()) + 4.0;
-    let _id = ui.push_id_ptr(event);
-    let _invisible_text = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 0.0]);
-    let clicked = ui
-        .selectable_config("##console_output_row")
-        .selected(selected_text.as_deref() == Some(text.as_str()))
-        .span_all_columns(true)
-        .size([width, row_height])
-        .build();
-    let next_row_y = ui.cursor_screen_pos()[1];
-    drop(_invisible_text);
-    if clicked {
-        *selected_text = Some(text.clone());
-    }
-    ui.set_cursor_screen_pos(position);
-    let _wrap = wrap_lines.then(|| ui.push_text_wrap_pos());
-    draw_ansi_text(ui, &event.text, color);
-    drop(_wrap);
-    ui.set_cursor_screen_pos([position[0], next_row_y]);
-}
-
-pub(super) fn draw_console_category_header(
-    ui: &imgui::Ui,
-    label: &str,
-    stripe: &mut bool,
-    selected_text: &mut Option<String>,
-) {
-    let (background, hovered) = if *stripe {
-        ([0.13, 0.20, 0.28, 1.0], [0.17, 0.26, 0.36, 1.0])
-    } else {
-        ([0.10, 0.16, 0.23, 1.0], [0.14, 0.22, 0.31, 1.0])
-    };
-    let _header = ui.push_style_color(imgui::StyleColor::Header, background);
-    let _hovered = ui.push_style_color(imgui::StyleColor::HeaderHovered, hovered);
-    let _active = ui.push_style_color(imgui::StyleColor::HeaderActive, background);
-    let clicked = ui
-        .selectable_config(label)
-        .selected(selected_text.as_deref() == Some(label))
-        .span_all_columns(true)
-        .size([ui.content_region_avail()[0], 0.0])
-        .build();
-    if clicked {
-        *selected_text = Some(label.to_owned());
-    }
-    *stripe = !*stripe;
-}
-
-pub(super) fn draw_script_event(
-    ui: &imgui::Ui,
-    event: &crate::api::scripts::console::ConsoleEvent,
-    last_script_source: &mut Option<crate::api::scripts::ScriptId>,
-    stripe: &mut bool,
-    selected_text: &mut Option<String>,
-    wrap_lines: bool,
-) -> bool {
-    let is_lifecycle_phase = matches!(
-        event.text.as_str(),
-        "Preparing"
-            | "Prepared"
-            | "Loaded"
-            | "Reloaded"
-            | "Unloaded"
-            | "Queued"
-            | "Cancelled"
-            | "Superseded"
-    );
-    if let Some(script) = event.script.as_ref().filter(|_| !is_lifecycle_phase) {
-        let is_same_source = last_script_source.as_ref() == Some(script);
-        if !is_same_source {
-            let label = format!("SCRIPT: {}", script.as_str());
-            draw_console_category_header(ui, &label, stripe, selected_text);
-        }
-        ui.indent();
-        draw_console_event(ui, event, selected_text, wrap_lines);
-        ui.unindent();
-        if !is_same_source {
-            ui.spacing();
-        }
-        *last_script_source = Some(script.clone());
-        return true;
-    }
-    *last_script_source = None;
-    false
-}
-
-pub(super) fn draw_console_transcript(
-    ui: &imgui::Ui,
-    events: &VecDeque<crate::api::scripts::console::ConsoleEvent>,
-    selected_text: &mut Option<String>,
-    wrap_lines: bool,
-) {
-    let mut view = TranscriptView::default();
-    let mut index = 0;
-    while index < events.len() {
-        let event = &events[index];
-        if let Some(command) = event.text.strip_prefix("> ") {
-            index = draw_command_group(
-                ui,
-                events,
-                index,
-                command,
-                selected_text,
-                wrap_lines,
-                &mut view,
-            );
-        } else {
-            draw_unattached_event(ui, event, selected_text, wrap_lines, &mut view);
-        }
-        index += 1;
-    }
-}
-
-#[derive(Default)]
-struct TranscriptView {
-    rendered_requests: std::collections::HashSet<u64>,
-    stripe: bool,
-    last_script_source: Option<crate::api::scripts::ScriptId>,
-}
-
-fn draw_command_group(
-    ui: &imgui::Ui,
-    events: &VecDeque<crate::api::scripts::console::ConsoleEvent>,
-    index: usize,
-    command: &str,
-    selected_text: &mut Option<String>,
-    wrap_lines: bool,
-    view: &mut TranscriptView,
-) -> usize {
-    view.last_script_source = None;
-    draw_console_category_header(
-        ui,
-        &format!("CMD: {command}"),
-        &mut view.stripe,
-        selected_text,
-    );
-    ui.indent();
-    let next_index = if let Some(request_id) = events[index].request_id {
-        view.rendered_requests.insert(request_id);
-        draw_request_responses(ui, events, request_id, selected_text, wrap_lines, view);
-        index
-    } else {
-        draw_adjacent_responses(ui, events, index, selected_text, wrap_lines, view)
-    };
-    ui.unindent();
-    ui.spacing();
-    next_index
-}
-
-fn draw_request_responses(
-    ui: &imgui::Ui,
-    events: &VecDeque<crate::api::scripts::console::ConsoleEvent>,
-    request_id: u64,
-    selected_text: &mut Option<String>,
-    wrap_lines: bool,
-    view: &mut TranscriptView,
-) {
-    for response in events.iter().filter(|response| {
-        response.request_id == Some(request_id) && !response.text.starts_with("> ")
-    }) {
-        draw_response(ui, response, selected_text, wrap_lines, view);
-    }
-}
-
-fn draw_adjacent_responses(
-    ui: &imgui::Ui,
-    events: &VecDeque<crate::api::scripts::console::ConsoleEvent>,
-    index: usize,
-    selected_text: &mut Option<String>,
-    wrap_lines: bool,
-    view: &mut TranscriptView,
-) -> usize {
-    let mut response_index = index + 1;
-    while response_index < events.len() {
-        let response = &events[response_index];
-        if response.text.starts_with("> ") || response.request_id.is_some() {
-            break;
-        }
-        draw_response(ui, response, selected_text, wrap_lines, view);
-        response_index += 1;
-    }
-    response_index.saturating_sub(1)
-}
-
-fn draw_response(
-    ui: &imgui::Ui,
-    event: &crate::api::scripts::console::ConsoleEvent,
-    selected_text: &mut Option<String>,
-    wrap_lines: bool,
-    view: &mut TranscriptView,
-) {
-    if !draw_script_event(
-        ui,
-        event,
-        &mut view.last_script_source,
-        &mut view.stripe,
-        selected_text,
-        wrap_lines,
-    ) {
-        draw_console_event(ui, event, selected_text, wrap_lines);
-    }
-}
-
-fn draw_unattached_event(
-    ui: &imgui::Ui,
-    event: &crate::api::scripts::console::ConsoleEvent,
-    selected_text: &mut Option<String>,
-    wrap_lines: bool,
-    view: &mut TranscriptView,
-) {
-    if event
-        .request_id
-        .is_some_and(|id| view.rendered_requests.contains(&id))
-    {
-        return;
-    }
-    if !draw_script_event(
-        ui,
-        event,
-        &mut view.last_script_source,
-        &mut view.stripe,
-        selected_text,
-        wrap_lines,
-    ) {
-        ui.indent();
-        draw_console_event(ui, event, selected_text, wrap_lines);
-        ui.unindent();
     }
 }
 

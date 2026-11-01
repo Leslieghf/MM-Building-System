@@ -45,6 +45,8 @@ pub struct ConsoleEvent {
     pub reload_error: Option<String>,
     /// Script callback phase when applicable.
     pub phase: Option<ScriptPhaseId>,
+    /// Rust module that produced this host-side log, when known.
+    pub source_module: Option<String>,
     /// Source location when the engine reports one.
     pub source_position: Option<SourcePosition>,
     /// Bounded display text.
@@ -62,8 +64,15 @@ impl ConsoleEvent {
             auto_reload: None,
             reload_error: None,
             phase: None,
+            source_module: None,
             source_position: None,
             text: bounded_text(text, MAX_EVENT_BYTES),
         }
+    }
+
+    /// Attribute a host log to the Rust module that produced it.
+    pub fn from_rust_module(mut self, module: &str) -> Self {
+        self.source_module = Some(module.to_owned());
+        self
     }
 }

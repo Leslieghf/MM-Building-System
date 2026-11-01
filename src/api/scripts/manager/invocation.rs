@@ -25,6 +25,10 @@ pub(super) fn invoke(
     raycast_capacity: bool,
     raycast_tickets: RaycastTicketStore,
     raycast_effects: &mut Vec<ScriptRaycastRequest>,
+    spawn_effects: &mut Vec<super::ScriptSpawnEffect>,
+    dependency_availability: std::collections::BTreeMap<String, bool>,
+    panel_events: &[ScriptPanelEvent],
+    panel_publications: &mut Vec<ScriptPanelPublication>,
 ) {
     let event = build_event(request_id, id, script, function);
     if script.status != ScriptStatus::Active {
@@ -51,23 +55,60 @@ pub(super) fn invoke(
         event.clone(),
         snapshot.callback_sequence,
         raycast_tickets.clone(),
+        snapshot.camera_position,
+        snapshot.camera_direction,
     );
-    let context = GamePostSimContext::new_with_raycast(
+    let spawn = InvocationSpawn::new(
+        script.capabilities.iter().any(|id| id == "game.spawn"),
+        spawn_effects.len() < super::MAX_SCRIPT_SPAWNS_PER_PHASE,
+        event.clone(),
+    );
+    let camera_control = crate::api::rhai::bindings::InvocationCameraControl::new(
+        script
+            .capabilities
+            .iter()
+            .any(|id| id == "game.camera.control"),
+        snapshot.callback_sequence,
+    );
+    let ui = crate::api::rhai::bindings::InvocationScriptUi::new(
+        script.capabilities.iter().any(|id| id == "ui.panels"),
+        panel_events.to_vec(),
+    );
+    let context = GamePostSimContext::new_with_dependencies(
         snapshot,
         log.clone(),
         &script.capabilities,
         write.clone(),
         raycast.clone(),
         debug.clone(),
-    );
+        ui.clone(),
+        dependency_availability,
+    )
+    .with_spawn(spawn.clone())
+    .with_camera_control(camera_control.clone());
     let result = run_callback(engine, script, function, context);
     log.finish();
     let velocity_effect = write.finish();
     let raycast_request = raycast.finish();
+    let spawn_request = spawn.finish();
     let debug_primitives = debug.finish();
     if let Some(failure) = callback_failure(script, &result) {
         report_callback_failure(sink, script, event, failure);
+        panel_publications.push(ScriptPanelPublication {
+            script_id: id.clone(),
+            generation: script.generation,
+            workbench_tab: None,
+            panels: Vec::new(),
+        });
     } else {
+        if let Some(request) = camera_control.finish() {
+            match request {
+                Some(value) => {
+                    crate::api::scripts::camera_override::publish(value, camera_control.sequence())
+                }
+                None => crate::api::scripts::camera_override::clear(),
+            }
+        }
         publish_callback_effects(
             sink,
             event,
@@ -76,11 +117,21 @@ pub(super) fn invoke(
             velocity_effect,
             debug_primitives,
             raycast_request,
+            spawn_request,
             raycast_tickets,
             effects,
             debug_effects,
             raycast_effects,
+            spawn_effects,
         );
+        if let Some(panels) = ui.finish() {
+            panel_publications.push(ScriptPanelPublication {
+                script_id: id.clone(),
+                generation: script.generation,
+                workbench_tab: None,
+                panels,
+            });
+        }
     }
 }
 
@@ -188,10 +239,12 @@ fn publish_callback_effects(
     velocity: Option<[f32; 3]>,
     primitives: Vec<DebugPrimitive>,
     raycast_request: Option<ScriptRaycastRequest>,
+    spawn_request: Option<super::ScriptSpawnEffect>,
     raycast_tickets: RaycastTicketStore,
     effects: &mut Vec<VehicleVelocityEffect>,
     debug_effects: &mut Vec<ScriptDebugDrawEffect>,
     raycast_effects: &mut Vec<ScriptRaycastRequest>,
+    spawn_effects: &mut Vec<super::ScriptSpawnEffect>,
 ) {
     if let Some(velocity) = velocity {
         let mut origin = event.clone();
@@ -225,6 +278,15 @@ fn publish_callback_effects(
             event.text = "raycast ticket store full; request was discarded".to_owned();
             sink.emit(event.clone());
         }
+    }
+    if let Some(request) = spawn_request {
+        event.kind = ScriptEventKind::Status;
+        event.text = format!(
+            "SPAWN: {} | queued | request {}",
+            request.catalog_id, request.request_id
+        );
+        sink.emit(event.clone());
+        spawn_effects.push(request);
     }
     if request_id.is_some() {
         event.kind = ScriptEventKind::Status;

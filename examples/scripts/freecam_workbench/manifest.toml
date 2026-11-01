@@ -1,0 +1,6 @@
+id = "freecam_workbench"
+api_version = 1
+capabilities = ["game.read", "game.camera.control", "input.read", "ui.panels"]
+
+[callbacks]
+"game.post_sim" = "on_post_sim"

@@ -6,12 +6,97 @@
 use super::*;
 use crate::api::game::abi::game::world_query::C_PLAYER_AIM_RAYCAST_FILTER_VFTABLE_RVA;
 use crate::api::scripts::{ScriptRaycastCompletion, ScriptRaycastFilter, ScriptRaycastRequest};
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct QueryKey {
+    origin: [u32; 3],
+    direction: [u32; 3],
+    max_distance: u32,
+    filter: ScriptRaycastFilter,
+}
+
+impl From<&ScriptRaycastRequest> for QueryKey {
+    fn from(request: &ScriptRaycastRequest) -> Self {
+        Self {
+            origin: request.origin.map(f32::to_bits),
+            direction: request.direction.map(f32::to_bits),
+            max_distance: request.max_distance.to_bits(),
+            filter: request.filter,
+        }
+    }
+}
+
+/// Shared result resource for one accepted game frame. It is populated lazily
+/// on demand and dropped after that frame's script requests are completed.
+#[derive(Default)]
+struct FrameRaycastResults(HashMap<QueryKey, ScriptRaycastCompletion>);
+
+impl FrameRaycastResults {
+    fn resolve(&mut self, request: ScriptRaycastRequest) -> ScriptRaycastCompletion {
+        let key = QueryKey::from(&request);
+        if let Some(shared) = self.0.get(&key) {
+            let mut completion = shared.clone();
+            completion.ticket = request.ticket;
+            completion.source = request.source;
+            return completion;
+        }
+        let completion = execute_script_raycast(request);
+        self.0.insert(key, completion.clone());
+        completion
+    }
+}
+
+/// Execute only demanded requests and share equivalent results in this game frame.
+/// The shared result table expires with the frame, avoiding stale camera hits.
+pub(in crate::api::game::native) fn execute_script_raycast_batch(
+    requests: Vec<ScriptRaycastRequest>,
+    mut should_continue: impl FnMut() -> bool,
+    mut complete: impl FnMut(ScriptRaycastCompletion),
+) {
+    if requests.is_empty() {
+        return;
+    }
+    if requests.len() == 1 {
+        if should_continue() {
+            complete(execute_script_raycast(
+                requests.into_iter().next().expect("one request"),
+            ));
+        }
+        return;
+    }
+    let mut frame_results = FrameRaycastResults::default();
+    for request in requests {
+        if !should_continue() {
+            break;
+        }
+        complete(frame_results.resolve(request));
+    }
+}
 
 struct QueryApi {
     base: *mut c_void,
     initialize: WorldQueryContextInitializeFn,
     set_option: RaycastFilterSetOptionFn,
     query: WorldQueryHelperFn,
+}
+
+#[derive(Clone, Copy)]
+struct QueryApiAddresses {
+    base_pointer: usize,
+    initialize: usize,
+    set_option: usize,
+    query: usize,
+    static_vtable: usize,
+    player_aim_vtable: usize,
+}
+
+static QUERY_API_ADDRESSES: OnceLock<QueryApiAddresses> = OnceLock::new();
+static LAST_WORLD_QUERY_MICROS: AtomicU64 = AtomicU64::new(0);
+
+pub(in crate::api::game::native) fn last_world_query_micros() -> u64 {
+    LAST_WORLD_QUERY_MICROS.load(Ordering::Relaxed)
 }
 
 #[derive(Clone, Copy)]
@@ -72,44 +157,47 @@ pub(in crate::api::game::native) fn execute_script_raycast(
 }
 
 fn resolve_query_api() -> Option<(QueryApi, usize, usize)> {
-    let module = unsafe { GetModuleHandleW(hudhook::windows::core::PCWSTR::null()) }.ok()?;
-    let image_base = module.0 as usize;
-    if image_base != STEAM_IMAGE_BASE {
-        return None;
-    }
-    let initializer_address = image_base.checked_add(WORLD_QUERY_CONTEXT_INITIALIZER_RVA)?;
-    let option_setter_address = image_base.checked_add(RAYCAST_FILTER_SET_OPTION_RVA)?;
-    let query_address = image_base.checked_add(WORLD_QUERY_HELPER_RVA)?;
-    let static_vtable = image_base.checked_add(C_STATIC_ONLY_RAYCAST_FILTER_VFTABLE_RVA)?;
-    let player_aim_vtable = image_base.checked_add(C_PLAYER_AIM_RAYCAST_FILTER_VFTABLE_RVA)?;
-    if ![initializer_address, option_setter_address, query_address]
-        .into_iter()
-        .all(is_readable_executable_page)
-    {
-        return None;
-    }
-    if !readable_span(static_vtable, size_of::<usize>())
-        || !readable_span(player_aim_vtable, size_of::<usize>())
-    {
-        return None;
-    }
-    let query_base_global = image_base.checked_add(WORLD_QUERY_BASE_POINTER_RVA)?;
-    if !readable_span(query_base_global, size_of::<*mut c_void>()) {
-        return None;
-    }
-    let base = unsafe { ptr::read_volatile(query_base_global as *const *mut c_void) };
+    let addresses = if let Some(addresses) = QUERY_API_ADDRESSES.get() {
+        *addresses
+    } else {
+        let module = unsafe { GetModuleHandleW(hudhook::windows::core::PCWSTR::null()) }.ok()?;
+        let image_base = module.0 as usize;
+        if image_base != STEAM_IMAGE_BASE {
+            return None;
+        }
+        let addresses = QueryApiAddresses {
+            base_pointer: image_base.checked_add(WORLD_QUERY_BASE_POINTER_RVA)?,
+            initialize: image_base.checked_add(WORLD_QUERY_CONTEXT_INITIALIZER_RVA)?,
+            set_option: image_base.checked_add(RAYCAST_FILTER_SET_OPTION_RVA)?,
+            query: image_base.checked_add(WORLD_QUERY_HELPER_RVA)?,
+            static_vtable: image_base.checked_add(C_STATIC_ONLY_RAYCAST_FILTER_VFTABLE_RVA)?,
+            player_aim_vtable: image_base.checked_add(C_PLAYER_AIM_RAYCAST_FILTER_VFTABLE_RVA)?,
+        };
+        if ![addresses.initialize, addresses.set_option, addresses.query]
+            .into_iter()
+            .all(is_readable_executable_page)
+            || !readable_span(addresses.static_vtable, size_of::<usize>())
+            || !readable_span(addresses.player_aim_vtable, size_of::<usize>())
+            || !readable_span(addresses.base_pointer, size_of::<*mut c_void>())
+        {
+            return None;
+        }
+        let _ = QUERY_API_ADDRESSES.set(addresses);
+        *QUERY_API_ADDRESSES.get()?
+    };
+    let base = unsafe { ptr::read_volatile(addresses.base_pointer as *const *mut c_void) };
     if base.is_null() || !readable_span(base as usize, 1) {
         return None;
     }
     Some((
         QueryApi {
             base,
-            initialize: unsafe { std::mem::transmute(initializer_address) },
-            set_option: unsafe { std::mem::transmute(option_setter_address) },
-            query: unsafe { std::mem::transmute(query_address) },
+            initialize: unsafe { std::mem::transmute(addresses.initialize) },
+            set_option: unsafe { std::mem::transmute(addresses.set_option) },
+            query: unsafe { std::mem::transmute(addresses.query) },
         },
-        static_vtable,
-        player_aim_vtable,
+        addresses.static_vtable,
+        addresses.player_aim_vtable,
     ))
 }
 
@@ -147,6 +235,7 @@ fn query_with_filter(
         qword_28: 0,
         words_30: [0; 8],
     };
+    let query_started = Instant::now();
     let state_present = unsafe {
         (api.query)(
             api.base,
@@ -162,6 +251,13 @@ fn query_with_filter(
             ptr::null(),
         )
     };
+    LAST_WORLD_QUERY_MICROS.store(
+        query_started
+            .elapsed()
+            .as_micros()
+            .min(u128::from(u64::MAX)) as u64,
+        Ordering::Relaxed,
+    );
     let fraction = (output.hit_fraction.is_finite() && (0.0..=1.0).contains(&output.hit_fraction))
         .then_some(output.hit_fraction);
     let position = fraction

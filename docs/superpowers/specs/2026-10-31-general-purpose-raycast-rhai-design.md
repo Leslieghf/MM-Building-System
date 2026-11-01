@@ -11,6 +11,7 @@ Give Rhai scripts a reusable way to submit world-ray queries with caller-chosen 
 - Use the actual camera matrix translation and camera-forward basis for the reticle example.
 - Keep the Raycast debug section to one optional `Hit position` row. The `reticle_ray` script may separately use the debug-draw capability to visualize the camera-ray direction and make a reported hit easy to see.
 - Make the query API usable for other script-created origins and directions, not just camera rays.
+- Provide a shared camera-ray request path that uses one frame-scoped result for all consumers that request the same camera ray; issue no native query without demand.
 - Keep query results data-only; scripts separately compose `game.raycast` with `debug.draw` when they want visualization.
 
 ## Non-goals
@@ -37,17 +38,17 @@ Give Rhai scripts a reusable way to submit world-ray queries with caller-chosen 
 
 ## Proposed script contract
 
-Scripts call `ctx.raycast.request(origin, direction, max_distance, filter_name)` and receive a numeric ticket. Direction is normalized by the host. Inputs must be finite; coordinates are limited to ±100000 world units; distance is in `(0, 500]`; direction must be nonzero. The first profiles are `static_only` and `player_aim`; unknown profiles fail with a script error.
+Scripts call `ctx.raycast.request(origin, direction, max_distance, filter_name)` for custom rays or `ctx.raycast.camera(max_distance, filter_name)` for the copied camera pose. Both return a numeric ticket. Direction is normalized by the host. Inputs must be finite; coordinates are limited to ±100000 world units; distance is in `(0, 500]`; direction must be nonzero. The first profiles are `static_only` and `player_aim`; unknown profiles fail with a script error.
 
-Scripts call `ctx.raycast.result(ticket)` in a later callback. A not-yet-completed or expired ticket returns a small result map with an explicit state; a completed result includes `has_hit`, optional `hit_position`, optional `fraction`, and `state_present`. Results are scoped to the requesting script generation so scripts cannot read one another's tickets. Tickets expire after 120 accepted game callbacks. Each script may submit at most one query per callback; the host accepts at most 8 requests per game callback in deterministic dispatch order. Requests from failed or obsolete script generations are discarded.
+Scripts call `ctx.raycast.result(ticket)` in a later callback. A not-yet-completed or expired ticket returns a small result map with an explicit state; a completed result includes `has_hit`, optional `hit_position`, optional `fraction`, and `state_present`. Results are scoped to the requesting script generation so scripts cannot read one another's tickets. Tickets expire after 120 accepted game callbacks. Each script may submit at most one query per callback; the host accepts at most 8 requests per game callback in deterministic dispatch order. Identical requests within a game frame share one native query and distribute the copied result to each requesting script's ticket. The shared frame result expires after dispatch, so camera movement cannot reuse stale results. Requests from failed or obsolete script generations are discarded.
 
 The script context exposes copied `ctx.camera.position` and `ctx.camera.direction` from a camera matrix sampled on each accepted game callback, independently of the slower player/vehicle telemetry cadence. A missing/stale matrix produces `()`. The context values are observations; they do not grant native access.
 
 ## Reticle example and debug display
 
-`reticle_ray` requests a `static_only` ray from the copied camera position along the camera's candidate view direction at a 500-unit maximum distance, once per accepted game callback with fresh camera pose. On later callbacks it reads the ticket result. Its direction must be checked in game; if it points opposite or away from the crosshair, correct the camera basis/sign from observed behavior before treating the feature as complete. The script composes `game.raycast` with `debug.draw`: it draws the camera origin and both direction signs as a visual discriminator, then draws one compact marker at a reported hit. These are separate capabilities; the raycast API itself returns data only. The Raycast debug section displays exactly one row, `Hit position`, showing coordinates only when a hit position exists and `--` otherwise.
+`reticle_ray` requests a camera ray only after its explicit **Cast ray** action, or a custom ray after that same action when either source is overridden. It reads the ticket on later callbacks and keeps the copied result for display. It does not continuously query while its panel is open. The script composes `game.raycast` with `debug.draw`; visualization is separate from the data-only raycast API. The Raycast debug section displays exactly one row, `Hit position`, showing coordinates only when a hit position exists and `--` otherwise.
 
-The existing direct reticle probe is removed once the general API can supply the display result, avoiding duplicate world queries. Ray cadence becomes bounded by the accepted callback and request limits rather than the old timer. The initial implementation must preserve enough request identity to publish the current `reticle_ray` result to the single debug row without exposing unrelated scripts' results.
+The existing direct reticle probe is removed once the general API can supply the display result, avoiding duplicate world queries. Camera queries are demand-driven and identical requests share the frame's result; no periodic ray cadence is required. The initial implementation must preserve enough request identity to publish the current `reticle_ray` result to the single debug row without exposing unrelated scripts' results.
 
 ## Safety and validation
 

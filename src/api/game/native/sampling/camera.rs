@@ -22,7 +22,9 @@ pub(in crate::api::game::native) fn sample_camera_matrix() -> Option<Matrix4x4> 
     let mut camera_matrix = Matrix4x4 {
         values: [[0.0; 4]; 4],
     };
-    unsafe { get_camera_matrix(manager.cast::<CameraControlManager>(), &mut camera_matrix) };
+    crate::api::scripts::camera_override::with_internal_getter_sample(|| unsafe {
+        get_camera_matrix(manager.cast::<CameraControlManager>(), &mut camera_matrix)
+    });
     camera_matrix
         .values
         .iter()

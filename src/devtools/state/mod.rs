@@ -11,7 +11,8 @@ mod overlay;
 mod presentation;
 
 pub use console::{DevToolsTab, ScriptConsoleStatusRow, ScriptConsoleUiState};
-pub use overlay::{OverlayMode, SpawnTestUiState, UI_OPACITY_MAX, UI_OPACITY_MIN, UiPreferences};
+pub use overlay::{OverlayMode, UI_OPACITY_MAX, UI_OPACITY_MIN, UiPreferences};
 pub use presentation::{
-    DebugSection, PendingUiInput, PresentationRow, UiGameSnapshot, UiPresentation,
+    DebugSection, OverlayFrameTimings, PendingUiInput, PresentationRow, ScriptPanelsUiState,
+    UiGameSnapshot, UiPresentation,
 };

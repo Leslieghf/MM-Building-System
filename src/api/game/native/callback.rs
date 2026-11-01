@@ -7,6 +7,23 @@
 //! skips phases whose build or callback gates are not satisfied.
 use super::*;
 
+static LAST_GAME_RUNTIME_MICROS: AtomicU64 = AtomicU64::new(0);
+
+struct GameRuntimeTimer(Instant);
+
+impl Drop for GameRuntimeTimer {
+    fn drop(&mut self) {
+        LAST_GAME_RUNTIME_MICROS.store(
+            self.0.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+            Ordering::Relaxed,
+        );
+    }
+}
+
+pub(super) fn last_game_runtime_micros() -> u64 {
+    LAST_GAME_RUNTIME_MICROS.load(Ordering::Relaxed)
+}
+
 pub(super) fn trace_game_runtime_stage(stage: u32, description: &str) {
     let bit = 1_u32 << stage;
     if GAME_RUNTIME_TRACE_STAGES.fetch_or(bit, Ordering::AcqRel) & bit == 0 {
@@ -15,6 +32,7 @@ pub(super) fn trace_game_runtime_stage(stage: u32, description: &str) {
 }
 
 pub(super) fn run_bevy_game_frame(thread_id: u32, overlap_epoch: u64) {
+    let _timer = GameRuntimeTimer(Instant::now());
     trace_game_runtime_stage(0, "entered runtime callback");
     if !callback_is_current(overlap_epoch) {
         return;
@@ -77,13 +95,14 @@ fn run_game_runtime_frame(snapshot: GameSnapshot, overlap_epoch: u64) {
 }
 
 fn submit_script_raycast_requests(runtime: &mut GameRuntime, epoch: u64) {
-    for request in runtime.take_script_raycast_requests() {
-        if !callback_is_current(epoch) {
-            break;
-        }
-        let result = execute_script_raycast(request);
-        runtime.complete_script_raycast(result);
-    }
+    let requests = runtime.take_script_raycast_requests();
+    execute_script_raycast_batch(
+        requests,
+        || callback_is_current(epoch),
+        |result| {
+            runtime.complete_script_raycast(result);
+        },
+    );
 }
 
 fn apply_pending_game_effect(runtime: &mut GameRuntime, snapshot: GameSnapshot, epoch: u64) {
@@ -94,6 +113,10 @@ fn apply_pending_game_effect(runtime: &mut GameRuntime, snapshot: GameSnapshot, 
         PendingGameIntent::Spawn(pending) => {
             let outcome = apply_spawn_intent(&pending, epoch);
             runtime.complete_spawn_intent(pending, outcome);
+        }
+        PendingGameIntent::SpawnRemoval(pending) => {
+            let outcome = apply_spawn_removal_intent(pending, epoch);
+            runtime.complete_spawn_removal(pending, outcome);
         }
         PendingGameIntent::Velocity(pending) => {
             let result = apply_velocity_intent(pending, epoch);

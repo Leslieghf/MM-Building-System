@@ -98,6 +98,8 @@ pub const SPAWN_INFO_DTOR_PAIR: AddressPair = pair(0x1402_E2320, 0x141E_B2E10);
 pub const SPAWN_SET_ENTITY_FILE_PAIR: AddressPair = pair(0x1405_48C60, 0x1421_71820);
 /// Spawn ID accessor address pair from the SDK.
 pub const SPAWN_GET_NEW_ID_PAIR: AddressPair = pair(0x1405_099D0, 0x1421_2B750);
+/// Spawn-system removal address pair from the SDK.
+pub const SPAWN_DESPAWN_PAIR: AddressPair = pair(0x1405_30400, 0x1421_57080);
 /// Spawn submission address pair from the SDK.
 pub const SPAWN_SUBMIT_PAIR: AddressPair = pair(0x1405_62EB0, 0x1421_8D5B0);
 /// Spawn-system context singleton address pair from the SDK.
@@ -122,7 +124,7 @@ pub mod steam {
     use super::{
         CAMERA_MANAGER_SINGLETON_PAIR, CHARACTER_MANAGER_SINGLETON_PAIR,
         DEVICE_MANAGER_SINGLETON_PAIR, GET_CAMERA_MATRIX_PAIR, GET_CHARACTER_VEHICLE_PAIR,
-        GET_PLAYER_CHARACTER_PAIR, SPAWN_GET_NEW_ID_PAIR, SPAWN_INFO_CTOR_PAIR,
+        GET_PLAYER_CHARACTER_PAIR, SPAWN_DESPAWN_PAIR, SPAWN_GET_NEW_ID_PAIR, SPAWN_INFO_CTOR_PAIR,
         SPAWN_INFO_DTOR_PAIR, SPAWN_SET_ENTITY_FILE_PAIR, SPAWN_SUBMIT_PAIR,
         SPAWN_SYSTEM_CONTEXT_PAIR, steam_address,
     };
@@ -145,6 +147,8 @@ pub mod steam {
     pub const SPAWN_SET_ENTITY_FILE: usize = steam_address(SPAWN_SET_ENTITY_FILE_PAIR);
     /// Spawn ID accessor address.
     pub const SPAWN_GET_NEW_ID: usize = steam_address(SPAWN_GET_NEW_ID_PAIR);
+    /// Spawn-system removal function address.
+    pub const SPAWN_DESPAWN: usize = steam_address(SPAWN_DESPAWN_PAIR);
     /// Spawn submission address.
     pub const SPAWN_SUBMIT: usize = steam_address(SPAWN_SUBMIT_PAIR);
     /// Spawn-system context singleton address.

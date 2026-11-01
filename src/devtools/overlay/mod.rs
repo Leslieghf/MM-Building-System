@@ -16,33 +16,40 @@
 mod clipboard;
 mod config;
 mod panel;
+mod spawn_menu;
+mod spawn_menu_catalog;
 use clipboard::Win32ClipboardBackend;
 use config::*;
 use panel::*;
+use spawn_menu::{SPAWN_MENU_TOGGLE_LOCKED, draw_spawn_menu};
 
-use crate::api::ecs::{
-    GameSnapshot, MadMaxRender, RuntimeDiagnostics, UiEndpoint, spawn_entity_intent,
-};
-use crate::api::game::abi::types::Vector3;
+use crate::api::ecs::{GameSnapshot, MadMaxRender, RuntimeDiagnostics, UiEndpoint};
 use crate::api::game::native as game_probe;
 use crate::api::scripts::console::{
     ConsoleCommand, ConsoleEvent, ConsoleOutput, ConsoleRequestSender, ConsoleSeverity,
 };
 use crate::devtools::presentation::{create_ui_app, flush_ui_intents};
 use crate::devtools::state::{
-    DebugSection, OverlayMode, PendingUiInput, ScriptConsoleUiState, SpawnTestUiState,
-    UI_OPACITY_MAX, UI_OPACITY_MIN, UiGameSnapshot, UiPreferences, UiPresentation,
+    DebugSection, OverlayMode, PendingUiInput, ScriptConsoleUiState, UI_OPACITY_MAX,
+    UI_OPACITY_MIN, UiGameSnapshot, UiPreferences, UiPresentation,
 };
 use crate::kernel::diagnostics::append_log;
 use bevy_app::App;
 use hudhook::hooks::dx11::ImguiDx11Hooks;
 use hudhook::windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use hudhook::windows::Win32::UI::WindowsAndMessaging::{WM_ACTIVATEAPP, WM_KILLFOCUS, WM_SETFOCUS};
-use hudhook::{Hudhook, ImguiRenderLoop, MessageFilter, imgui};
+use hudhook::windows::Win32::UI::WindowsAndMessaging::{
+    WM_ACTIVATEAPP, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_SETFOCUS, WM_SYSKEYDOWN, WM_SYSKEYUP,
+};
+use hudhook::{BeforeWndProc, Hudhook, ImguiRenderLoop, MessageFilter, imgui};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+pub(crate) fn plain_console_text(text: &str) -> String {
+    panel::strip_console_ansi(text)
+}
 use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 /// Owns one frame of ImGui presentation and the UI-side runtime bridge.
 struct OverlayRenderDriver;
@@ -54,6 +61,18 @@ struct UiRuntime {
 
 static UI_ENDPOINT: OnceLock<Mutex<Option<UiEndpoint>>> = OnceLock::new();
 static CLIPBOARD_BACKEND_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static SPAWN_MENU_Q_DOWN: AtomicBool = AtomicBool::new(false);
+static SPAWN_MENU_CAPTURE: AtomicBool = AtomicBool::new(false);
+static SPAWN_MENU_KEYS_ENABLED: AtomicBool = AtomicBool::new(false);
+static SPAWN_MENU_PINNED: AtomicBool = AtomicBool::new(false);
+static OVERLAY_TRACE_STAGES: AtomicU32 = AtomicU32::new(0);
+
+fn trace_overlay_stage(stage: u32, description: &str) {
+    let bit = 1_u32 << stage;
+    if OVERLAY_TRACE_STAGES.fetch_or(bit, Ordering::AcqRel) & bit == 0 {
+        append_log(&format!("Overlay startup diagnostic: {description}"));
+    }
+}
 
 thread_local! {
     static UI_RUNTIME: std::cell::RefCell<Option<UiRuntime>> = const { std::cell::RefCell::new(None) };
@@ -87,6 +106,19 @@ impl UiRuntime {
             .world_mut()
             .resource_mut::<ConsoleOutput>()
             .drain(&self.endpoint.console_events);
+        let mut newest_panels = None;
+        for _ in 0..crate::api::scripts::PANEL_PUBLICATION_QUEUE_CAPACITY {
+            match self.endpoint.script_panels_rx.try_recv() {
+                Ok(publications) => newest_panels = Some(publications),
+                Err(_) => break,
+            }
+        }
+        if let Some(publications) = newest_panels {
+            self.app
+                .world_mut()
+                .resource_mut::<crate::devtools::state::ScriptPanelsUiState>()
+                .replace(publications);
+        }
         publish_discovery_results(&mut self.app, &self.endpoint.discovery_rx);
         self.app.world_mut().resource_scope(
             |world, mut state: bevy_ecs::prelude::Mut<ScriptConsoleUiState>| {
@@ -192,6 +224,7 @@ impl ImguiRenderLoop for OverlayRenderDriver {
         context: &mut imgui::Context,
         _render_context: &mut dyn hudhook::RenderContext,
     ) {
+        trace_overlay_stage(0, "entered ImGui before-render callback");
         if CLIPBOARD_BACKEND_INITIALIZED
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
@@ -205,21 +238,51 @@ impl ImguiRenderLoop for OverlayRenderDriver {
                 .resource::<UiPreferences>()
                 .captures_game_input()
         })
-        .unwrap_or(false);
+        .unwrap_or(false)
+            || SPAWN_MENU_CAPTURE.load(Ordering::Acquire);
+        trace_overlay_stage(1, "before-render callback completed UI runtime access");
     }
 
     fn render(&mut self, ui: &mut imgui::Ui) {
+        trace_overlay_stage(2, "entered ImGui render callback");
         let _ = with_ui_runtime(|runtime| {
+            trace_overlay_stage(3, "acquired UI runtime for render");
+            let frame_started = Instant::now();
+            let mut frame_timings = crate::devtools::state::OverlayFrameTimings::default();
+            let phase_started = Instant::now();
             runtime.sync_worlds();
-            sample_and_publish_input(runtime, ui);
+            trace_overlay_stage(4, "synced UI Bevy world");
+            frame_timings.sync_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+            let phase_started = Instant::now();
             fire_input_binds(runtime, ui, ui.io().want_text_input);
             let mut preferences = *runtime.app.world().resource::<UiPreferences>();
             preferences.set_ui_opacity(preferences.ui_opacity);
             handle_overlay_shortcuts(runtime, ui, &mut preferences);
-            let rows = runtime.app.world().resource::<UiPresentation>().0.clone();
-            draw_debug_panel(ui, &preferences, &rows);
+            let spawn_script_active = spawn_menu_script_is_active(runtime);
+            update_spawn_menu_mode(&mut preferences, spawn_script_active);
+            sample_and_publish_input(runtime, ui, preferences.captures_game_input());
+            trace_overlay_stage(5, "sampled/published overlay input");
+            frame_timings.input_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+            let previous_timings = *runtime
+                .app
+                .world()
+                .resource::<crate::devtools::state::OverlayFrameTimings>();
+            let phase_started = Instant::now();
+            {
+                let rows = &runtime.app.world().resource::<UiPresentation>().0;
+                draw_debug_panel(ui, &preferences, rows, &previous_timings);
+            }
+            trace_overlay_stage(6, "drew debug HUD");
+            frame_timings.debug_hud_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+            let phase_started = Instant::now();
+            if preferences.show_script_panels {
+                draw_script_panels(runtime, ui, &preferences);
+            }
+            trace_overlay_stage(7, "drew script panels");
+            frame_timings.script_panels_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+            let phase_started = Instant::now();
             if preferences.mode == OverlayMode::UiConfigurator
-                && draw_ui_configurator(runtime, ui, &mut preferences)
+                && draw_ui_configurator(ui, &mut preferences)
             {
                 preferences.set_mode(OverlayMode::Hud);
             }
@@ -228,28 +291,98 @@ impl ImguiRenderLoop for OverlayRenderDriver {
             {
                 preferences.set_mode(OverlayMode::Hud);
             }
+            trace_overlay_stage(8, "drew configurator and developer tools");
+            frame_timings.dev_tools_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+            let phase_started = Instant::now();
+            if preferences.mode == OverlayMode::SpawnMenu {
+                draw_spawn_menu(runtime, ui, &preferences);
+            }
+            trace_overlay_stage(9, "drew spawn browser if active");
+            frame_timings.spawn_menu_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+            SPAWN_MENU_KEYS_ENABLED.store(
+                spawn_script_active
+                    && matches!(preferences.mode, OverlayMode::Hud | OverlayMode::SpawnMenu),
+                Ordering::Release,
+            );
+            if preferences.mode != OverlayMode::SpawnMenu {
+                SPAWN_MENU_TOGGLE_LOCKED.store(false, Ordering::Release);
+            }
             *runtime.app.world_mut().resource_mut::<UiPreferences>() = preferences;
             game_probe::set_ui_input_capture(preferences.captures_game_input());
+            frame_timings.total_ms = frame_started.elapsed().as_secs_f64() * 1000.0;
+            *runtime
+                .app
+                .world_mut()
+                .resource_mut::<crate::devtools::state::OverlayFrameTimings>() = frame_timings;
         });
+        trace_overlay_stage(10, "completed ImGui render callback");
     }
+    fn before_wnd_proc(
+        &self,
+        _hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        _lparam: LPARAM,
+    ) -> BeforeWndProc {
+        if !SPAWN_MENU_KEYS_ENABLED.load(Ordering::Acquire) || wparam.0 != usize::from(b'Q') {
+            return BeforeWndProc::Continue;
+        }
+        match message {
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
+                if SPAWN_MENU_TOGGLE_LOCKED.load(Ordering::Acquire) {
+                    return BeforeWndProc::Continue;
+                }
+                SPAWN_MENU_Q_DOWN.store(true, Ordering::Release);
+                SPAWN_MENU_PINNED.store(false, Ordering::Release);
+                SPAWN_MENU_CAPTURE.store(true, Ordering::Release);
+                game_probe::set_ui_input_capture(true);
+                BeforeWndProc::Break
+            }
+            WM_KEYUP | WM_SYSKEYUP => {
+                let was_consumed = SPAWN_MENU_Q_DOWN.swap(false, Ordering::AcqRel);
+                if was_consumed {
+                    let locked = SPAWN_MENU_TOGGLE_LOCKED.load(Ordering::Acquire);
+                    SPAWN_MENU_PINNED.store(locked, Ordering::Release);
+                    SPAWN_MENU_CAPTURE.store(locked, Ordering::Release);
+                    game_probe::set_ui_input_capture(locked);
+                    BeforeWndProc::Break
+                } else if SPAWN_MENU_PINNED.load(Ordering::Acquire) {
+                    BeforeWndProc::Break
+                } else {
+                    BeforeWndProc::Continue
+                }
+            }
+            _ => BeforeWndProc::Continue,
+        }
+    }
+
     fn after_wnd_proc(&self, _hwnd: HWND, message: u32, wparam: WPARAM, _lparam: LPARAM) {
         match message {
-            WM_ACTIVATEAPP => game_probe::set_game_window_active(wparam.0 != 0),
+            WM_ACTIVATEAPP => {
+                game_probe::set_game_window_active(wparam.0 != 0);
+                if wparam.0 == 0 {
+                    reset_spawn_menu_key_state();
+                }
+            }
             WM_SETFOCUS => game_probe::set_game_window_active(true),
-            WM_KILLFOCUS => game_probe::set_game_window_active(false),
+            WM_KILLFOCUS => {
+                game_probe::set_game_window_active(false);
+                reset_spawn_menu_key_state();
+            }
             _ => {}
         }
     }
 
     fn message_filter(&self, _io: &imgui::Io) -> MessageFilter {
-        if with_ui_runtime(|runtime| {
-            runtime
-                .app
-                .world()
-                .resource::<UiPreferences>()
-                .captures_game_input()
-        })
-        .unwrap_or(false)
+        if SPAWN_MENU_CAPTURE.load(Ordering::Acquire)
+            || with_ui_runtime(|runtime| {
+                runtime
+                    .app
+                    .world()
+                    .resource::<UiPreferences>()
+                    .captures_game_input()
+            })
+            .unwrap_or(false)
         {
             MessageFilter::InputAll
         } else {
@@ -258,24 +391,84 @@ impl ImguiRenderLoop for OverlayRenderDriver {
     }
 }
 
-fn sample_and_publish_input(runtime: &mut UiRuntime, ui: &imgui::Ui) {
-    if !ENABLE_RUNTIME_INPUT_SAMPLING {
-        return;
+fn reset_spawn_menu_key_state() {
+    SPAWN_MENU_Q_DOWN.store(false, Ordering::Release);
+    SPAWN_MENU_CAPTURE.store(false, Ordering::Release);
+    SPAWN_MENU_PINNED.store(false, Ordering::Release);
+    SPAWN_MENU_TOGGLE_LOCKED.store(false, Ordering::Release);
+    game_probe::set_ui_input_capture(false);
+}
+
+fn spawn_menu_script_is_active(runtime: &UiRuntime) -> bool {
+    runtime
+        .app
+        .world()
+        .resource::<crate::devtools::state::ScriptPanelsUiState>()
+        .publications
+        .iter()
+        .any(|publication| {
+            publication.script_id.as_str() == "debug_spawn_menu"
+                && publication
+                    .panels
+                    .iter()
+                    .any(|panel| panel.id == "spawn_workbench")
+        })
+}
+
+fn update_spawn_menu_mode(preferences: &mut UiPreferences, spawn_script_active: bool) {
+    match preferences.mode {
+        OverlayMode::Hud
+            if spawn_script_active
+                && (SPAWN_MENU_Q_DOWN.load(Ordering::Acquire)
+                    || SPAWN_MENU_PINNED.load(Ordering::Acquire)) =>
+        {
+            preferences.set_spawn_menu_open(true);
+        }
+        OverlayMode::SpawnMenu if !spawn_script_active => {
+            preferences.set_spawn_menu_open(false);
+            reset_spawn_menu_key_state();
+        }
+        OverlayMode::SpawnMenu
+            if !SPAWN_MENU_Q_DOWN.load(Ordering::Acquire)
+                && !SPAWN_MENU_PINNED.load(Ordering::Acquire) =>
+        {
+            preferences.set_spawn_menu_open(false);
+            SPAWN_MENU_CAPTURE.store(false, Ordering::Release);
+            SPAWN_MENU_TOGGLE_LOCKED.store(false, Ordering::Release);
+        }
+        OverlayMode::UiConfigurator | OverlayMode::ScriptConsole => {
+            SPAWN_MENU_KEYS_ENABLED.store(false, Ordering::Release);
+            SPAWN_MENU_Q_DOWN.store(false, Ordering::Release);
+            SPAWN_MENU_PINNED.store(false, Ordering::Release);
+            SPAWN_MENU_TOGGLE_LOCKED.store(false, Ordering::Release);
+            SPAWN_MENU_CAPTURE.store(false, Ordering::Release);
+        }
+        _ => {}
     }
-    let frame = {
+}
+
+fn sample_and_publish_input(runtime: &mut UiRuntime, ui: &imgui::Ui, capture_active: bool) {
+    let sample_active = ENABLE_RUNTIME_INPUT_SAMPLING && capture_active && !ui.io().want_text_input;
+    let frame = if sample_active {
         let mut frame = runtime
             .app
             .world_mut()
             .resource_mut::<crate::api::ecs::input::InputFrame>();
         frame.clear_edges();
+        frame.set_available();
         for key in imgui::Key::VARIANTS {
             if let Some(key_id) = crate::devtools::input::from_imgui(key) {
                 frame.set_down(key_id.id(), sample_input_key(ui, key));
             }
         }
         *frame
+    } else {
+        crate::api::ecs::input::InputFrame::default()
     };
     let mut pending = runtime.app.world_mut().resource_mut::<PendingUiInput>();
+    if !sample_active {
+        pending.0 = crate::api::ecs::input::InputFrame::default();
+    }
     pending.0.accumulate_sample(frame);
     if runtime.endpoint.input_mailbox.publish(pending.0) {
         pending.0.clear_edges();
@@ -298,6 +491,9 @@ fn handle_overlay_shortcuts(
     let console = ui.is_key_pressed_no_repeat(imgui::Key::F3);
     if escape_pressed && (preferences.mode != OverlayMode::Hud || preferences.captures_game_input())
     {
+        if preferences.mode == OverlayMode::SpawnMenu {
+            reset_spawn_menu_key_state();
+        }
         release_input_capture(preferences);
     } else if capture {
         preferences.toggle_input_capture();
@@ -352,6 +548,7 @@ fn draw_debug_panel(
     ui: &imgui::Ui,
     preferences: &UiPreferences,
     rows: &[crate::devtools::state::PresentationRow],
+    timings: &crate::devtools::state::OverlayFrameTimings,
 ) {
     let style = ui.push_style_color(
         imgui::StyleColor::WindowBg,
@@ -362,7 +559,7 @@ fn draw_debug_panel(
         .bg_alpha(preferences.ui_opacity)
         .flags(overlay_window_flags(preferences))
         .build(|| {
-            draw_debug_sections(ui, rows, preferences);
+            draw_debug_sections(ui, rows, preferences, timings);
             draw_overlay_shortcut_hints(ui, preferences);
         });
     style.pop();
@@ -382,19 +579,50 @@ fn draw_debug_sections(
     ui: &imgui::Ui,
     rows: &[crate::devtools::state::PresentationRow],
     preferences: &UiPreferences,
+    timings: &crate::devtools::state::OverlayFrameTimings,
 ) {
     for (visible, title, section) in [
         (preferences.show_player, "Player", DebugSection::Player),
         (preferences.show_camera, "Camera", DebugSection::Camera),
-        (preferences.show_raycast, "Raycast", DebugSection::Raycast),
         (preferences.show_vehicle, "Vehicle", DebugSection::Vehicle),
         (preferences.show_runtime, "Runtime", DebugSection::Runtime),
     ] {
         if visible {
             section_header(ui, title);
             draw_rows(ui, rows, section);
+            if section == DebugSection::Runtime {
+                draw_performance_rows(ui, timings);
+            }
         }
     }
+}
+
+fn draw_performance_rows(ui: &imgui::Ui, timings: &crate::devtools::state::OverlayFrameTimings) {
+    let (game_runtime_micros, world_query_micros) = game_probe::last_mod_performance_micros();
+    ui.text_disabled("Mod CPU time, previous render frame:");
+    draw_timing_row(ui, "Overlay total", timings.total_ms);
+    draw_timing_row(ui, "  Snapshot + Bevy UI schedule", timings.sync_ms);
+    draw_timing_row(ui, "  Input + bind handling", timings.input_ms);
+    draw_timing_row(ui, "  Debug HUD", timings.debug_hud_ms);
+    draw_timing_row(ui, "  Script panels", timings.script_panels_ms);
+    draw_timing_row(ui, "  Console / configurator", timings.dev_tools_ms);
+    draw_timing_row(ui, "  Spawn browser", timings.spawn_menu_ms);
+    ui.separator();
+    ui.text_disabled("Game callback / latest native operation:");
+    draw_timing_row(
+        ui,
+        "  Mod game callback",
+        game_runtime_micros as f64 / 1000.0,
+    );
+    draw_timing_row(
+        ui,
+        "  Native world query",
+        world_query_micros as f64 / 1000.0,
+    );
+}
+
+fn draw_timing_row(ui: &imgui::Ui, label: &str, milliseconds: f64) {
+    ui.text(format!("{label}: {milliseconds:.3} ms"));
 }
 
 fn draw_overlay_shortcut_hints(ui: &imgui::Ui, preferences: &UiPreferences) {
@@ -408,11 +636,7 @@ fn draw_overlay_shortcut_hints(ui: &imgui::Ui, preferences: &UiPreferences) {
     ui.text("F3: Dev Tools");
 }
 
-fn draw_ui_configurator(
-    runtime: &mut UiRuntime,
-    ui: &imgui::Ui,
-    preferences: &mut UiPreferences,
-) -> bool {
+fn draw_ui_configurator(ui: &imgui::Ui, preferences: &mut UiPreferences) -> bool {
     let mut close_requested = false;
     let style = ui.push_style_color(
         imgui::StyleColor::WindowBg,
@@ -423,7 +647,6 @@ fn draw_ui_configurator(
         .flags(overlay_window_flags(preferences))
         .build(|| {
             draw_configurator_controls(ui, preferences);
-            draw_buggy_spawn_control(runtime, ui);
             ui.separator();
             close_requested = ui.button("Close");
             ui.same_line();
@@ -437,9 +660,10 @@ fn draw_configurator_controls(ui: &imgui::Ui, preferences: &mut UiPreferences) {
     ui.text("Show in the debug panel:");
     ui.checkbox("Player", &mut preferences.show_player);
     ui.checkbox("Camera", &mut preferences.show_camera);
-    ui.checkbox("Raycast", &mut preferences.show_raycast);
     ui.checkbox("Vehicle", &mut preferences.show_vehicle);
     ui.checkbox("Runtime", &mut preferences.show_runtime);
+    ui.separator();
+    ui.checkbox("Script panels", &mut preferences.show_script_panels);
     ui.separator();
     ui.slider_config("Background opacity", UI_OPACITY_MIN, UI_OPACITY_MAX)
         .flags(imgui::SliderFlags::ALWAYS_CLAMP)
@@ -447,41 +671,6 @@ fn draw_configurator_controls(ui: &imgui::Ui, preferences: &mut UiPreferences) {
         .build(&mut preferences.ui_opacity);
     preferences.set_ui_opacity(preferences.ui_opacity);
     ui.text_disabled("F1: toggle capture | F2: close configurator | F3: Dev Tools");
-}
-
-fn draw_buggy_spawn_control(runtime: &mut UiRuntime, ui: &imgui::Ui) {
-    ui.separator();
-    if runtime.app.world().resource::<SpawnTestUiState>().attempted {
-        ui.text("One buggy request submitted; check Runtime for status.");
-        return;
-    }
-    let Some(mut transform) = runtime
-        .app
-        .world()
-        .resource::<UiGameSnapshot>()
-        .0
-        .player_transform
-    else {
-        ui.text("Waiting for a fresh player transform.");
-        return;
-    };
-    if !ui.button("Submit one test buggy spawn") {
-        return;
-    }
-    let position =
-        transform.translation() + transform.forward() * 8.0 + Vector3::new(0.0, 0.2, 0.0);
-    transform.set_translation(position);
-    if let Ok(bundle) = spawn_entity_intent(
-        "editor/entities/a00/exported/a00_vehicle_empty_buggy",
-        transform,
-    ) {
-        runtime.app.world_mut().spawn(bundle);
-        runtime
-            .app
-            .world_mut()
-            .resource_mut::<SpawnTestUiState>()
-            .attempted = true;
-    }
 }
 
 fn draw_script_console(
@@ -492,16 +681,25 @@ fn draw_script_console(
     let mut close_requested = false;
     runtime.app.world_mut().resource_scope(
         |world, mut state: bevy_ecs::prelude::Mut<ScriptConsoleUiState>| {
-            let mut output = world.resource_mut::<ConsoleOutput>();
-            close_requested = draw_dev_tools(
-                ui,
-                &mut state,
-                &mut output,
-                &mut runtime.endpoint.console_requests,
-                &runtime.endpoint.discovery_requester,
-                preferences.captures_game_input(),
-                preferences.ui_opacity,
-            );
+            world.resource_scope(|world, mut output: bevy_ecs::prelude::Mut<ConsoleOutput>| {
+                world.resource_scope(
+                    |_,
+                     mut panels: bevy_ecs::prelude::Mut<
+                        crate::devtools::state::ScriptPanelsUiState,
+                    >| {
+                        close_requested = draw_dev_tools(
+                            ui,
+                            &mut state,
+                            &mut output,
+                            &mut runtime.endpoint.console_requests,
+                            &runtime.endpoint.discovery_requester,
+                            &mut panels,
+                            preferences.captures_game_input(),
+                            preferences.ui_opacity,
+                        );
+                    },
+                );
+            });
         },
     );
     close_requested

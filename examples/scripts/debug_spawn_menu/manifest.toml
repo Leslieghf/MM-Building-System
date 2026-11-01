@@ -1,0 +1,6 @@
+id = "debug_spawn_menu"
+api_version = 1
+capabilities = ["game.read", "game.raycast", "game.spawn", "debug.draw", "ui.panels"]
+
+[callbacks]
+"game.post_sim" = "on_post_sim"
