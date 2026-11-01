@@ -64,3 +64,7 @@ This materially narrows the investigation: the action system is not only a regis
 - This gives a focused next reverse-engineering path for input routing: resolve the hash/key descriptor, find the queue consumer, identify the subscriber object's callback type, and trace how physical controls map into action IDs.
 
 It does **not** establish that mods can add actions, that actions are exposed in Mad Max's keybind menu, or that a registered action can suppress native gameplay input. Those require tracing the physical binding lookup and dispatch/consumption phase. No function in this map is safe to call from Rust yet.
+
+## Adjacent input-override lead
+
+The broader creator inventory also identifies `CInputActionOverride`; its creator size callback `GetCInputActionOverrideInstanceSize` (`0x141F779B0` in the saved snapshot) returns `0x130`. This is a promising adjacent type for the input-routing investigation, but current evidence does not connect its instances to the action registry, action subscriber callbacks, or native key suppression. Treat it as a separate follow-up target, not part of the mapped registration path.
