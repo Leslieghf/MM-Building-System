@@ -4,9 +4,13 @@ This file is generated from the runtime API catalog during the Rust build.
 
 API version: **1**
 
+## Host-only Rust data types
+
+`api::assets` defines owned asset descriptors and procedural geometry for host-side tools. These Rust types are not registered in Rhai, are not available to scripts, and do not load game assets or create native objects.
+
 ## Package contract
 
-Packages may declare `version` (default `0.0.0`), ordered confined `sources` (default `["main.rhai"]`), typed `requires` records (`kind = "package" | "host_api"`, `id`, semantic `version`, optional flag), package `conflicts`, and optional `workbench_tab = { id, title, order }`. Required local packages are prepared dependency-first and activated together at a callback boundary; cycles, missing/incompatible requirements, and conflicts reject the graph. `ctx.dependencies.available(id)` lets a package conditionally expose features for its declared optional requirements. Package dependencies do not grant effect capabilities. Tab packages require host API `workbench.tabs` version `^1.0.0` and both `ui.workbench` and `ui.panels` capabilities. Rhai source files remain confined to the package; use the manifest source list instead of filesystem imports.
+Packages may declare `version` (default `0.0.0`), ordered confined `sources` (default `["main.rhai"]`), typed `requires` records (`kind = "package" | "host_api"`, `id`, semantic `version`, optional flag), package `conflicts`, and optional `workbench_tab = { id, title, order, surface }`. Each tab package is independently loadable and may select `panels`, `events`, `scripts`, `console`, `catalog`, or `debug` as its native surface; package code and capabilities remain separate. The `debug` package controls the Rust-rendered live HUD through its load/unload lifecycle. Required local packages are prepared dependency-first and activated together at a callback boundary; cycles, missing/incompatible requirements, and conflicts reject the graph. `ctx.dependencies.available(id)` lets a package conditionally expose features for its declared optional requirements. Package dependencies do not grant effect capabilities. Tab packages require host API `workbench.tabs` version `^1.0.0` and both `ui.workbench` and `ui.panels` capabilities. Rhai source files remain confined to the package; use the manifest source list instead of filesystem imports.
 
 ## Capabilities
 
@@ -14,6 +18,7 @@ Packages may declare `version` (default `0.0.0`), ordered confined `sources` (de
 - `game.read`
 - `game.raycast`
 - `game.spawn`
+- `game.events.dispatch`
 - `game.camera.control`
 - `game.vehicle.write`
 - `input.read`
@@ -49,6 +54,7 @@ API version: **1**. Both callbacks receive the same context and have the same ca
 - `ctx.camera_control: MadMaxCameraControl [game.camera.control; bounded, expiring override of the matrix returned by the native camera getter; does not detach the camera]`
 - `ctx.input: mod-owned keyboard/mouse event snapshot [input.read]; available only while F1 overlay input capture is active; down/just_pressed/just_released only describe overlay-observed input, never native game actions or XInput state`
 - `ctx.entities: MadMaxEntitySpawner [game.spawn; catalog-gated entity spawn requests; no native pointers or arbitrary entity paths]`
+- `ctx.events: MadMaxGameEvents [game.events.dispatch; catalogued name-only action dispatch]`
 - `ctx.player.available: bool [read; game.read]`
 - `ctx.player.position: vector | () [read; game.read]`
 - `ctx.player.transform: array[16] | () [read; game.read; copied row-major game transform; translation at elements 12–14]`
@@ -116,6 +122,10 @@ API version: **1**. Both callbacks receive the same context and have the same ca
 - `ctx.entities.request(catalog_id: string, transform: array[16]) -> integer [game.spawn; accepts green verified entries and yellow attempts with a usable entity asset path; red entries have no known spawn route; native submission is reported separately from observed spawn completion]`
 - `ctx.entities.ready() -> bool [game.spawn; indicates whether this callback can enqueue its one request without exceeding the bounded spawn queue]`
 
+### Game actions
+
+- `ctx.events.dispatch_action(name: string) -> () [game.events.dispatch; one catalogued name-only special-camera action per invocation; queued for the accepted game callback; native submission does not confirm resulting behavior]`
+
 ### Script panels
 
 - `ctx.ui.events(panel_id: string) -> map [ui.panels; copied widget changes delivered on a later game.post_sim callback; buttons are one-callback true values]`
@@ -128,6 +138,9 @@ API version: **1**. Both callbacks receive the same context and have the same ca
 - `panel.number(widget_id: string, label: string, value: number, min: number, max: number, step: number) -> MadMaxPanelBuilder [ui.panels; finite bounded scalar; positive step]`
 - `panel.select(widget_id: string, label: string, value: string, options: array) -> MadMaxPanelBuilder [ui.panels; 1 to 16 fixed string options]`
 - `panel.button(widget_id: string, label: string) -> MadMaxPanelBuilder [ui.panels; one-callback true event]`
+- `panel.text_field(widget_id: string, label: string, value: string) -> MadMaxPanelBuilder [ui.panels; single-line UTF-8 input; 160-byte value limit]`
+- `panel.code_editor(widget_id: string, label: string, value: string, editable: bool) -> MadMaxPanelBuilder [ui.panels; bounded multiline buffer; 8192-byte limit; editable changes are copied events and do not write files]`
+- `panel.hierarchy_item(widget_id: string, label: string, value: string, depth: integer, selected: bool) -> MadMaxPanelBuilder [ui.panels; flattened selectable tree row; depth 0..16; selected value returned as a copied event]`
 - `ctx.ui.publish(panel: MadMaxPanelBuilder) -> () [ui.panels; replaces the package's full panel snapshot for this callback; at most 4 panels and 48 widgets per panel]`
 
 ### Package dependencies
@@ -172,4 +185,4 @@ Vectors use +X right, +Y up, and -Z forward. Transforms are 16-number row-major 
 
 ### Limits and native behavior
 
-Math vector components and results are finite and within [-100000, 100000]. Scalar math arguments/results must be finite; `lerp` requires `t` in [0, 1]. `normalize` and `direction` return `()` for magnitude/distance <= 1e-12. Script panels allow 4 panels per package, 48 widgets per panel, 160 UTF-8 bytes per text value, and 16 selector options; widget numbers are finite, bounded, and within ±100000. Debug coordinates and transforms are finite and within ±100000, colors are in [0, 1], and radii are in [0.01, 10000]. Debug drawing is limited to 32 primitives and 256 estimated geometry segments per invocation, and 128 primitives and 512 segments per game callback. Raycasts accept coordinates within ±100000, distance in (0, 500], one request per script callback, and up to eight requests per game callback; results are copied and available on a later callback. Script spawning accepts a 16-number finite transform within ±100000, one catalog-approved request per callback and one per game callback. Vehicle velocity writes require copied velocity and are published only after successful callbacks.
+Math vector components and results are finite and within [-100000, 100000]. Scalar math arguments/results must be finite; `lerp` requires `t` in [0, 1]. `normalize` and `direction` return `()` for magnitude/distance <= 1e-12. Script panels allow 4 panels per package, 48 widgets per panel, 160 UTF-8 bytes per ordinary text value, an 8192-byte multiline editor buffer, hierarchy depth 0..16, and 16 selector options; widget numbers are finite, bounded, and within ±100000. The code editor only edits the copied UI buffer; it does not write package files. Rust owns native widget rendering, text limits, scroll regions, and event validation; Rhai publishes bounded data descriptions and consumes copied change events. Debug coordinates and transforms are finite and within ±100000, colors are in [0, 1], and radii are in [0.01, 10000]. Debug drawing is limited to 32 primitives and 256 estimated geometry segments per invocation, and 128 primitives and 512 segments per game callback. Raycasts accept coordinates within ±100000, distance in (0, 500], one request per script callback, and up to eight requests per game callback; results are copied and available on a later callback. Script spawning accepts a 16-number finite transform within ±100000, one catalog-approved request per callback and one per game callback. Vehicle velocity writes require copied velocity and are published only after successful callbacks.

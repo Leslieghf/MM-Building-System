@@ -39,6 +39,18 @@ python tools/asset_workbench/prepare_preview.py textures/a00/props/storagepiles/
 
 `build_manifest.py` merges the local path census, compiled bundle members, parsed entity profiles, reference edges, both spawn catalogs, and generated preview sidecars into `asset-workbench-resources.jsonl` with a summary JSON. Run it after preparing previews to refresh `preview_ready` and the local report/image paths. Same-stem source-reference and compiled paths remain separate records. Family labels and viewer capabilities are discovery metadata; they do not assert that a decoder exists or that an asset is spawnable.
 
+`build_model_thumbnails.py --limit 40` walks that local inventory and invokes the existing previewer for up to 40 unique RBS model/bundle-owner pairs. Each supported pair produces a transparent PNG, a read-only preview page, and the previewer’s existing GLB where its decoder succeeds. The JSON report records successes and per-item failures under ignored `target/content-index`; `--dry-run` shows the selected pairs without extracting anything. Increase `--limit` for a broader batch. This does not require an in-game photo room, and it only covers the currently decoded RBS/RBN variants; unsupported model formats stay clearly marked for future decoder work.
+
+## Procedural geometry schema preview
+
+`procedural_geometry.py` writes a version-1 host-side asset descriptor and geometry document containing a translated box and triangular prism, plus a manifest with bounds/material slots/validation status, offline HTML and GLB, and (when Pillow is installed) a transparent PNG preview. The current manifest explicitly says structural validation has not been performed; a generated preview is not evidence that the Rust deserializer or game accepts the asset:
+
+```powershell
+python tools/asset_workbench/procedural_geometry.py
+```
+
+Outputs go under ignored `target/content-index/generated/procedural/`. This is a schema/preview demonstration only: it does not register Rhai constructors, load a game resource, create a native Mad Max object, or establish game collision. The tool uses the same local transform convention as the Rust schema and marks its generated output `preview_only`.
+
 Each JSONL record has a stable `resource_id`: `game-path:<case-folded normalized logical path>` for named paths and `game-basename:<case-folded basename>` for the path list's basename-only entries. These 816 basename-only records are kept distinct instead of being merged into one empty path. The generated inventory remains local under ignored `target/content-index/`; it includes metadata and relationships but no archive payloads or extracted previews.
 
 ## Searchable local gallery

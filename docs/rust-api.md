@@ -32,6 +32,7 @@ There is currently no public third-party registration or runtime loading mechani
 | Rust module | Contract |
 | --- | --- |
 | `api::ecs` | Owned snapshots, ECS projection, schedules, diagnostics, and bounded intents. |
+| `api::assets` | Host-only, versioned asset descriptors and validated procedural geometry data. Not registered in Rhai; no native handles or game-object construction. |
 | `api::scripts` | Script packages, lifecycle requests, console transport, and events. |
 | `api::rhai` | Versioned Rhai context registration and API catalog. |
 | `api::game` | Public low-level declarations for the supported build and the private native access; an implementation boundary, not the supported extension API. |
@@ -43,9 +44,18 @@ The raw ABI declarations remain visible for research and first-party integration
 - [`api::ecs`](../src/api/ecs/mod.rs) documents copied frame data, schedules, input, and typed effects.
 - [`components`](../src/api/ecs/components/mod.rs), [`resources`](../src/api/ecs/resources/mod.rs), and [`systems`](../src/api/ecs/systems/mod.rs) separate ECS data from execution.
 - [`api::scripts`](../src/api/scripts/mod.rs) documents package identity, events, and lifecycle boundaries.
+- [`api::assets`](../src/api/assets/mod.rs) documents the engine-independent asset schema. These types are currently Rust-host-only and do not imply an asset loader or runtime object backend.
 - [`InputKey`](../src/api/ecs/input_key.rs) documents the stable key-name and numeric-ID contract.
 - [Rhai API v1](rhai-api.md) is generated from the same catalog used to register script-visible functions.
 
 ## Safety
 
 Do not retain native addresses as object handles, use reverse-engineered function aliases as general APIs, or infer runtime correctness from compilation. Address metadata is specific to the build fingerprint. Queue limits and effect validation are part of the runtime contract; callers must handle full queues and unavailable samples.
+
+## Asset and geometry host schema
+
+`api::assets::ASSET_SCHEMA_VERSION` is currently `1`. `AssetDescriptor` binds a stable `namespace:path` `AssetKey` to a source kind and locator, broad `ResourceFamily`, bounded dependency references, decode and preview states, and `EvidenceConfidence`. Confidence describes how well the resource identity is understood; it does not claim that the game can load or spawn it. Keys are lowercase ASCII, at most 192 bytes; source locators are 1–512 bytes; each descriptor has at most 128 dependencies. Constructors and deserialization validate keys, locators, and dependency counts.
+
+`GeometryAsset` is an owned procedural mesh description identified by an `AssetKey`. It contains 1–256 `GeometryPrimitive`s and computes aggregate local-space bounds from their transformed vertices. Each primitive contains finite 3D vertices, a triangle index buffer, an affine 4×4 local transform, 1–64 material slots, and one material-slot index per triangle. Transform storage uses the game array convention with translation at indices 12–14. Limits are 65,536 vertices and 196,608 indices per primitive, and 1,000,000 vertices and 3,000,000 indices per asset. Indices and material references are range-checked. Constructors validate their inputs; deserialization also validates automatically and recomputes cached bounds instead of trusting serialized bounds. Public `validate` methods can recheck and recompute bounds after mutation.
+
+These are serialized/copied host values only. They contain no native pointers or handles, have no Rhai constructors/accessors, and do not establish native rendering, collision, persistence, or object-creation support.

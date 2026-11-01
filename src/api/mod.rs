@@ -14,6 +14,9 @@
 //! Native pointers stay inside [`game`]. Callers exchange copied snapshots and
 //! typed requests; a successful Rust build does not establish runtime safety
 //! for a particular game executable.
+/// Engine-independent, validated asset and procedural geometry descriptions.
+/// These are host-side Rust types and are not currently exposed to Rhai.
+pub mod assets;
 pub mod ecs;
 pub mod format;
 pub mod game;
